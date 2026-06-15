@@ -3,6 +3,8 @@ import { Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { SnapsBypassInitializer } from "@/components/SnapsBypassInitializer";
+import { ContractInfoFooter } from "@/components/ContractInfoFooter";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -36,7 +38,13 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <TooltipProvider>
-            {children}
+            <div className="flex flex-col min-h-screen">
+              <SnapsBypassInitializer />
+              <main className="flex-1 flex flex-col">
+                {children}
+              </main>
+              <ContractInfoFooter />
+            </div>
           </TooltipProvider>
         </ThemeProvider>
       </body>
