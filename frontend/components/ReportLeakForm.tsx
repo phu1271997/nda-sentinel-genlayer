@@ -4,6 +4,7 @@ import { useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { client, CONTRACT_ADDRESS } from "@/lib/genlayer"
 import { decryptVault, VaultData } from "@/lib/vault"
+import { parseContractError } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -65,7 +66,7 @@ export function ReportLeakForm() {
       
     } catch (err) {
       console.error(err);
-      alert("Error reporting leak");
+      alert(parseContractError(err));
     } finally {
       setIsSubmitting(false);
     }

@@ -8,6 +8,7 @@ import * as z from "zod"
 import { client, CONTRACT_ADDRESS } from "@/lib/genlayer"
 import { generateSalt, hashKeyword } from "@/lib/crypto"
 import { downloadVaultFile } from "@/lib/vault"
+import { parseContractError } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -110,7 +111,7 @@ export function NDAWizard() {
       
     } catch (err) {
       console.error(err)
-      alert("Error creating NDA")
+      alert(parseContractError(err))
     } finally {
       setIsSubmitting(false)
     }
