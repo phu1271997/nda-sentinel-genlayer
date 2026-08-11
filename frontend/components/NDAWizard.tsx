@@ -31,11 +31,34 @@ const ALLOWED_SCOPES = [
   "research_data", "customer_list", "other"
 ]
 
+// Tomorrow at 00:00 local — earliest legal expiry. `<input type="date">`
+// only carries a date, no time, so a same-day pick would parse to
+// today 00:00 and be strictly in the past by the time the tx lands.
+function tomorrowIsoDate(): string {
+  const t = new Date()
+  t.setDate(t.getDate() + 1)
+  t.setHours(0, 0, 0, 0)
+  return t.toISOString().slice(0, 10)
+}
+
 const formSchema = z.object({
   counterpartyHex: z.string().regex(/^0x[a-fA-F0-9]{40}$/, "Invalid Ethereum address"),
   scope: z.string().min(1, "Required"),
   contextDescription: z.string().min(10).max(500),
-  expiryDate: z.string().min(1, "Required"),
+  expiryDate: z
+    .string()
+    .min(1, "Required")
+    .refine(
+      (v) => {
+        const ms = Date.parse(v)
+        if (!Number.isFinite(ms)) return false
+        // Require the expiry to be strictly in the future. Give a small
+        // safety cushion (60 s) so a form filled out right at midnight
+        // does not get rejected by the time the tx is mined.
+        return ms > Date.now() + 60_000
+      },
+      { message: "Expiry must be a future date" },
+    ),
   keywordsText: z.string().min(1, "Required"),
   vaultPassword: z.string().min(6, "Minimum 6 characters"),
   stakeAmount: z.string().regex(/^\d+(\.\d+)?$/, "Must be a valid number"),
@@ -215,8 +238,11 @@ export function NDAWizard() {
                     <FormItem>
                       <FormLabel>Expiry Date</FormLabel>
                       <FormControl>
-                        <Input type="date" {...field} />
+                        <Input type="date" min={tomorrowIsoDate()} {...field} />
                       </FormControl>
+                      <FormDescription>
+                        Must be at least tomorrow. The contract rejects any expiry that is not strictly in the future.
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
