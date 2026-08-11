@@ -17,7 +17,7 @@ distributes stakes based on the verdict, with a full appeal cycle.
 
 | Network    | Address | Explorer |
 |------------|---------|----------|
-| studionet  | *(v0.2.20 — pending fresh deploy; frontend fallback still points at v0.2.19)* | [Deploy in Studio](https://studio.genlayer.com/contracts) |
+| studionet  | `0x06be1A7897fD9f911eAF78383158A83d32485465` (v0.2.20) | [Open in Studio](https://studio.genlayer.com/?import-contract=0x06be1A7897fD9f911eAF78383158A83d32485465) |
 | studionet (previous) | `0x817422E7aF4D86d848Bf9BC13b9A9c333CF341dd` (v0.2.19) | [Open in Studio](https://studio.genlayer.com/?import-contract=0x817422E7aF4D86d848Bf9BC13b9A9c333CF341dd) |
 
 Prior addresses (superseded): `0xa39218…a7DE` (v0.2.18, 2026-07-30),
