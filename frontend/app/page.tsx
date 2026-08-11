@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   Gavel,
   Coins,
+  BadgeCheck,
 } from "lucide-react"
 import Link from "next/link"
 
@@ -33,6 +34,13 @@ export default function Home() {
           >
             <AlertTriangle className="w-4 h-4" />
             Report Leak
+          </Link>
+          <Link
+            href="/identity"
+            className="text-sm font-medium text-emerald-600 dark:text-emerald-400 hover:underline underline-offset-4 flex items-center gap-1"
+          >
+            <BadgeCheck className="w-4 h-4" />
+            Identity
           </Link>
           <Link href="/violations" className="text-sm font-medium hover:underline underline-offset-4">
             Violations Log

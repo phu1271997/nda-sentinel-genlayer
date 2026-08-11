@@ -22,6 +22,26 @@ export interface NDADetail extends NDA {
     appeal_deadline: string;
 }
 
+export interface Appeal {
+    nda_id: string;
+    appellant: string;
+    appeal_stake: string;
+    counter_evidence: string;
+    submitted_at: string;
+    resolved: boolean;
+    overturned: boolean;
+    final_verdict_json: string;
+    appeal_ground: "PRIOR_DISCLOSURE" | "ATTRIBUTION_ERROR" | "KEYWORD_MISMATCH" | "";
+    evidence_url: string;
+    evidence_timestamp: string;
+}
+
+export interface PublisherIdentity {
+    handle: string;
+    proof_url: string;
+    verified_at: string;
+}
+
 export interface Verdict {
     verdict: "violation_confirmed" | "no_violation" | "inconclusive";
     confidence: number;

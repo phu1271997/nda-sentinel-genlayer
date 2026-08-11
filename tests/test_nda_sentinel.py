@@ -84,6 +84,25 @@ def mock_verdict(direct_vm, verdict: str):
     )
 
 
+# v0.2.20 — structured appeal helper. Existing tests only need the ground
+# stub for backwards behaviour; PRIOR_DISCLOSURE-specific gates get their
+# own dedicated tests below.
+DEFAULT_EVIDENCE_URL = "https://example.com/appeal-evidence"
+
+
+def do_appeal(
+    contract,
+    nda_id: int = 0,
+    ground: str = "ATTRIBUTION_ERROR",
+    evidence_url: str = DEFAULT_EVIDENCE_URL,
+    evidence_timestamp: int = 0,
+    context_notes: str = "Structured appeal from tests.",
+):
+    contract.appeal(
+        nda_id, ground, evidence_url, evidence_timestamp, context_notes,
+    )
+
+
 def report_party_a(direct_vm, contract, reporter):
     direct_vm.sender = reporter
     direct_vm.value = REPORT_FEE
@@ -187,7 +206,7 @@ def test_overturned_appeal_restores_collateral_without_minting(
 
     direct_vm.sender = direct_alice
     direct_vm.value = APPEAL_FEE
-    contract.appeal(0, "This publication predates the NDA and proves prior disclosure.")
+    do_appeal(contract, 0, context_notes="This publication predates the NDA and proves prior disclosure.")
     direct_vm.value = 0
 
     nda = contract.get_nda(0)
@@ -221,7 +240,7 @@ def test_upheld_appeal_and_reward_path_conserve_every_payment(
 
     direct_vm.sender = direct_alice
     direct_vm.value = APPEAL_FEE
-    contract.appeal(0, "The attribution should be reviewed again.")
+    do_appeal(contract, 0, context_notes="The attribution should be reviewed again.")
     direct_vm.value = 0
 
     direct_vm.sender = direct_bob
@@ -254,10 +273,10 @@ def test_deadline_and_replay_protections(direct_vm, direct_deploy, direct_alice,
 
     direct_vm.sender = direct_alice
     direct_vm.value = APPEAL_FEE
-    contract.appeal(0, "Review the attribution evidence.")
+    do_appeal(contract, 0, context_notes="Review the attribution evidence.")
 
     with direct_vm.expect_revert("Appeal already submitted for this verdict"):
-        contract.appeal(0, "Replay the same appeal.")
+        do_appeal(contract, 0, context_notes="Replay the same appeal.")
 
 
 def test_late_appeal_rejected_and_reward_claimable_at_boundary(
@@ -271,7 +290,7 @@ def test_late_appeal_rejected_and_reward_claimable_at_boundary(
     direct_vm.sender = direct_alice
     direct_vm.value = APPEAL_FEE
     with direct_vm.expect_revert("Appeal window has elapsed"):
-        contract.appeal(0, "This appeal is too late.")
+        do_appeal(contract, 0, context_notes="This appeal is too late.")
 
     direct_vm.sender = direct_bob
     direct_vm.value = 0
@@ -348,7 +367,7 @@ def test_replay_across_two_verdict_cycles(direct_vm, direct_deploy, direct_alice
     report_party_a(direct_vm, contract, direct_bob)
     direct_vm.sender = direct_alice
     direct_vm.value = APPEAL_FEE
-    contract.appeal(0, "Prior disclosure proves this was public earlier.")
+    do_appeal(contract, 0, context_notes="Prior disclosure proves this was public earlier.")
     direct_vm.value = 0
 
     nda_after_cycle1 = contract.get_nda(0)
@@ -364,7 +383,7 @@ def test_replay_across_two_verdict_cycles(direct_vm, direct_deploy, direct_alice
     direct_vm.value = APPEAL_FEE
     # The replay guard from cycle 1 must have been cleared — this call must
     # NOT revert with "Appeal already submitted for this verdict".
-    contract.appeal(0, "Try appealing the fresh accusation.")
+    do_appeal(contract, 0, context_notes="Try appealing the fresh accusation.")
     direct_vm.value = 0
 
     stats = json.loads(contract.get_stats())
@@ -387,7 +406,7 @@ def test_liabilities_invariant_across_lifecycle(direct_vm, direct_deploy, direct
 
     direct_vm.sender = direct_alice
     direct_vm.value = APPEAL_FEE
-    contract.appeal(0, "Please review the attribution once more.")
+    do_appeal(contract, 0, context_notes="Please review the attribution once more.")
     direct_vm.value = 0
     assert_liabilities_match(contract, 2 * STAKE + REPORT_FEE + APPEAL_FEE)
 
@@ -406,7 +425,7 @@ def test_liabilities_invariant_on_overturned_lifecycle(direct_vm, direct_deploy,
 
     direct_vm.sender = direct_alice
     direct_vm.value = APPEAL_FEE
-    contract.appeal(0, "Counter-evidence attached.")
+    do_appeal(contract, 0, context_notes="Counter-evidence attached.")
     direct_vm.value = 0
     # On overturn: appeal fee refunded to appellant as withdrawable; report
     # fee stayed in treasury; stakes restored.
@@ -419,7 +438,7 @@ def test_new_stats_counters_track_appeal_outcomes(direct_vm, direct_deploy, dire
     report_party_a(direct_vm, contract, direct_bob)
     direct_vm.sender = direct_alice
     direct_vm.value = APPEAL_FEE
-    contract.appeal(0, "Overturn me.")
+    do_appeal(contract, 0, context_notes="Overturn me.")
     direct_vm.value = 0
 
     stats = json.loads(contract.get_stats())
@@ -483,7 +502,7 @@ def test_reputation_rollback_and_penalty_on_overturn(
     report_party_a(direct_vm, contract, direct_bob)
     direct_vm.sender = direct_alice
     direct_vm.value = APPEAL_FEE
-    contract.appeal(0, "Overturn evidence.")
+    do_appeal(contract, 0, context_notes="Overturn evidence.")
     direct_vm.value = 0
 
     reporter = reputation(contract, direct_bob)
@@ -524,7 +543,7 @@ def test_event_log_appended_across_full_lifecycle(direct_vm, direct_deploy, dire
 
     direct_vm.sender = direct_alice
     direct_vm.value = APPEAL_FEE
-    contract.appeal(0, "Test the appeal-filed and appeal-upheld emits.")
+    do_appeal(contract, 0, context_notes="Test the appeal-filed and appeal-upheld emits.")
     direct_vm.value = 0
     # appeal_filed + appeal_upheld
     assert int(contract.get_events_count()) == 6
@@ -603,3 +622,291 @@ def test_reputation_never_underflows_below_zero(direct_vm, direct_deploy, direct
     alice_rep = reputation(contract, direct_alice)
     assert int(alice_rep["score"]) == 0
     assert alice_rep["tier"] == "flagged"
+
+
+# ---------------------------------------------------------------------------
+# v0.2.20 — reviewer-requested tests
+# ---------------------------------------------------------------------------
+# 1. Prove that the real web fetch executes INSIDE the eq_principle flow
+#    (reviewer: "add a focused test showing the real fetch executes within
+#    the equivalence-principle flow").
+# 2. Publisher identity registration — happy path + failure path (reviewer:
+#    "authenticate publisher identity").
+# 3. Structured appeal — enum gate, timestamp gate, evidence-URL fetch
+#    (reviewer: "make appeal evidence contract-verifiable rather than
+#    free-form prose").
+# ---------------------------------------------------------------------------
+
+
+DISTINCTIVE_PRIMARY_BODY = "MARKER_PRIMARY_ec6f7a9b_leak_of_secret_algorithm"
+
+
+def test_web_render_executes_inside_equivalence_principle_flow(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    """Reviewer-focused test.
+
+    Installs a WEB mock with a distinctive marker string as the body of
+    the PRIMARY suspect URL, then wires the LLM mock to REFUSE unless
+    that exact marker is present in the prompt it receives. If the
+    `gl.nondet.web.render` call did not actually fire inside the
+    equivalence-principle closure — or if its result was not threaded
+    into the LLM prompt — the LLM mock returns `no_violation` and the
+    NDA never transitions to `leaked`.
+    """
+    contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
+    direct_vm.clear_mocks()
+
+    # PRIMARY suspect URL returns the distinctive body; other fetches
+    # (wayback, google) fall back to a neutral body.
+    direct_vm.mock_web(
+        r"https://example\.com/real-leak",
+        {"status": 200, "body": DISTINCTIVE_PRIMARY_BODY},
+    )
+    direct_vm.mock_web(r".*", {"status": 200, "body": "unrelated corroborating content"})
+
+    # Only respond `violation_confirmed` if the prompt actually contains
+    # the distinctive marker — i.e. the primary fetch really happened
+    # and was passed into the LLM call.
+    direct_vm.mock_llm(
+        rf".*{DISTINCTIVE_PRIMARY_BODY}.*",
+        json.dumps({
+            "verdict": "violation_confirmed",
+            "confidence": 90,
+            "responsible_party": "party_a",
+            "match_score": 92,
+            "specificity_score": 88,
+            "prior_disclosure_found": False,
+            "intent": "intentional",
+            "reasoning": "Marker was present in the fetched primary body.",
+            "evidence_quote": DISTINCTIVE_PRIMARY_BODY,
+            "matched_keywords_count": 1,
+            "sources_evaluated": 3,
+            "sources_confirming": 1,
+            "cross_reference_notes": "primary-only",
+        }),
+    )
+    # Catch-all guardrail: any prompt WITHOUT the marker must return a
+    # non-violation, so the test fails loudly if the fetch didn't wire in.
+    direct_vm.mock_llm(
+        r".*AI Jury for an NDA enforcement protocol.*",
+        json.dumps({
+            "verdict": "no_violation",
+            "confidence": 5,
+            "responsible_party": "unknown",
+            "match_score": 0,
+            "specificity_score": 0,
+            "prior_disclosure_found": False,
+            "intent": "unknown",
+            "reasoning": "Marker missing — the fetch never ran or wasn't wired in.",
+            "evidence_quote": "",
+            "matched_keywords_count": 0,
+            "sources_evaluated": 0,
+            "sources_confirming": 0,
+            "cross_reference_notes": "no-marker",
+        }),
+    )
+
+    direct_vm.sender = direct_bob
+    direct_vm.value = REPORT_FEE
+    contract.report_leak(
+        0,
+        "https://example.com/real-leak",
+        json.dumps([KEYWORDS[0]]),
+        SALT,
+    )
+    direct_vm.value = 0
+
+    nda = contract.get_nda(0)
+    assert nda.status == "leaked", (
+        f"Expected 'leaked' (would only be set if the marker-bearing prompt "
+        f"reached the LLM, proving the fetch fired inside eq_principle). "
+        f"Got status={nda.status}"
+    )
+    assert nda.suspect_url == "https://example.com/real-leak"
+    # verdict_json must contain the marker as evidence_quote — direct
+    # proof that the fetched body flowed through consensus into storage.
+    verdict = json.loads(nda.verdict_json)
+    assert DISTINCTIVE_PRIMARY_BODY in verdict.get("evidence_quote", "")
+
+
+# ---------- Publisher identity ----------
+
+
+def mock_identity(direct_vm, verified: bool):
+    direct_vm.clear_mocks()
+    direct_vm.mock_web(r".*", {"status": 200, "body": "identity page body"})
+    direct_vm.mock_llm(
+        r".*verify out-of-band publisher identity.*",
+        json.dumps({
+            "verified": verified,
+            "handle_seen": verified,
+            "address_seen": verified,
+            "reasoning": "mock",
+        }),
+    )
+
+
+def test_register_publisher_identity_persists_on_confirmed_proof(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
+    mock_identity(direct_vm, verified=True)
+
+    direct_vm.sender = direct_alice
+    contract.register_publisher_identity(
+        "@alice_handle", "https://alice.example.com/proof",
+    )
+
+    ident = json.loads(contract.get_publisher_identity(direct_alice))
+    assert ident["handle"] == "@alice_handle"
+    assert ident["proof_url"] == "https://alice.example.com/proof"
+    assert int(ident["verified_at"]) > 0
+
+
+def test_register_publisher_identity_rejects_when_proof_fails(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
+    mock_identity(direct_vm, verified=False)
+
+    direct_vm.sender = direct_alice
+    with direct_vm.expect_revert("identity verification failed"):
+        contract.register_publisher_identity(
+            "@alice_handle", "https://alice.example.com/proof",
+        )
+
+    ident = json.loads(contract.get_publisher_identity(direct_alice))
+    assert ident["handle"] == ""
+
+
+def test_register_publisher_identity_rejects_malformed_url(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
+    direct_vm.sender = direct_alice
+    with direct_vm.expect_revert("proof_url must be http:// or https://"):
+        contract.register_publisher_identity(
+            "@alice_handle", "ftp://alice.example.com/proof",
+        )
+
+
+# ---------- Contract-verifiable appeal ----------
+
+
+def test_appeal_rejects_unknown_ground(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
+    mock_verdict(direct_vm, "overturned")
+    report_party_a(direct_vm, contract, direct_bob)
+
+    direct_vm.sender = direct_alice
+    direct_vm.value = APPEAL_FEE
+    with direct_vm.expect_revert("appeal_ground must be one of"):
+        contract.appeal(
+            0,
+            "MADE_UP_GROUND",
+            "https://example.com/x",
+            0,
+            "notes",
+        )
+
+
+def test_appeal_prior_disclosure_rejects_timestamp_after_nda_created(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
+    mock_verdict(direct_vm, "overturned")
+    report_party_a(direct_vm, contract, direct_bob)
+
+    direct_vm.sender = direct_alice
+    direct_vm.value = APPEAL_FEE
+    # NDA was created at START (2026-01-01). A claimed evidence timestamp
+    # AFTER that must be rejected — the contract, not the LLM, enforces.
+    late = int(START.timestamp()) + 60
+    with direct_vm.expect_revert(
+        "PRIOR_DISCLOSURE evidence_timestamp must be strictly before nda.created_at",
+    ):
+        contract.appeal(
+            0,
+            "PRIOR_DISCLOSURE",
+            "https://example.com/older",
+            late,
+            "notes",
+        )
+
+
+def test_appeal_prior_disclosure_requires_nonzero_timestamp(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
+    mock_verdict(direct_vm, "overturned")
+    report_party_a(direct_vm, contract, direct_bob)
+
+    direct_vm.sender = direct_alice
+    direct_vm.value = APPEAL_FEE
+    with direct_vm.expect_revert(
+        "PRIOR_DISCLOSURE requires a non-zero evidence_timestamp",
+    ):
+        contract.appeal(
+            0,
+            "PRIOR_DISCLOSURE",
+            "https://example.com/older",
+            0,
+            "notes",
+        )
+
+
+def test_appeal_prior_disclosure_accepts_pre_nda_timestamp_and_persists(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
+    mock_verdict(direct_vm, "overturned")
+    report_party_a(direct_vm, contract, direct_bob)
+
+    direct_vm.sender = direct_alice
+    direct_vm.value = APPEAL_FEE
+    prior = int(START.timestamp()) - 24 * 60 * 60  # 1 day before NDA
+    contract.appeal(
+        0,
+        "PRIOR_DISCLOSURE",
+        "https://example.com/older",
+        prior,
+        "The article predates the NDA by one day.",
+    )
+    direct_vm.value = 0
+
+    ap = contract.get_appeal(0)
+    assert ap.appeal_ground == "PRIOR_DISCLOSURE"
+    assert ap.evidence_url == "https://example.com/older"
+    assert int(ap.evidence_timestamp) == prior
+    # counter_evidence storage now carries the machine-readable JSON blob
+    stored = json.loads(ap.counter_evidence)
+    assert stored["appeal_ground"] == "PRIOR_DISCLOSURE"
+    assert stored["evidence_timestamp"] == prior
+
+
+def test_appeal_rejects_non_http_evidence_url(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
+    mock_verdict(direct_vm, "overturned")
+    report_party_a(direct_vm, contract, direct_bob)
+
+    direct_vm.sender = direct_alice
+    direct_vm.value = APPEAL_FEE
+    with direct_vm.expect_revert("evidence_url must be http:// or https://"):
+        contract.appeal(
+            0,
+            "ATTRIBUTION_ERROR",
+            "ftp://example.com/x",
+            0,
+            "notes",
+        )
+
+
+def test_appeal_grounds_view_lists_all_enum_values(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
+    grounds = json.loads(contract.get_appeal_grounds())
+    assert set(grounds) == {"PRIOR_DISCLOSURE", "ATTRIBUTION_ERROR", "KEYWORD_MISMATCH"}

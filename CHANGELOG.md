@@ -9,6 +9,108 @@ resubmission-review feedback item(s) it addresses.
 
 ---
 
+## [0.2.20] — 2026-08-11 — Reviewer round 3: lint + focused fetch test + publisher identity + contract-verifiable appeal
+
+Addresses the four items from the round-3 reviewer note:
+> *"Please refactor the nested web-fetch path so current genvm-lint no
+> longer reports E010, and add a focused test showing the real fetch
+> executes within the equivalence-principle flow. For a stronger
+> enforcement model, also authenticate publisher identity and make
+> appeal evidence contract-verifiable rather than free-form prose."*
+
+### 1. genvm-lint E010 — nested web-fetch path refactor
+
+- `report_leak.leader_fn` no longer delegates `gl.nondet.web.render`
+  calls through a nested `_safe_fetch(url, max_chars)` helper. All three
+  fetches (PRIMARY / WAYBACK / GOOGLE) are now lexically inside the
+  `leader_fn` closure, one `try/except gl.nondet.web.render(...)`
+  block per source, so the static linter sees each call as a direct
+  nondet call of the `eq_principle.prompt_comparative` path.
+- Same treatment for the new `register_publisher_identity` and
+  restructured `appeal` closures.
+
+### 2. Focused test that the real fetch fires inside `eq_principle`
+
+- `test_web_render_executes_inside_equivalence_principle_flow`
+  installs a distinctive marker string as the PRIMARY suspect URL's
+  body and wires the LLM mock to only return `violation_confirmed`
+  **iff the marker appears in the prompt**. A catch-all guardrail LLM
+  mock returns `no_violation` when the marker is missing. The test
+  asserts:
+  1. NDA status transitions to `leaked` (only possible via a
+     marker-bearing prompt),
+  2. `nda.suspect_url` matches,
+  3. `verdict_json.evidence_quote` contains the marker string — direct
+     proof the fetched body flowed through consensus into storage.
+
+### 3. Publisher identity authentication
+
+- New storage: `publisher_handle: TreeMap[str, str]`,
+  `publisher_proof_url`, `publisher_verified_at`.
+- New method `register_publisher_identity(handle, proof_url)`:
+  fetches `proof_url` via `gl.nondet.web.render` inside
+  `gl.eq_principle.prompt_comparative`, and only writes the mapping
+  when validators unanimously agree the page contains BOTH the handle
+  AND the caller's lowercase 0x-prefixed hex address.
+- New view `get_publisher_identity(user) -> str` (JSON:
+  `{handle, proof_url, verified_at}`).
+- `report_leak.leader_fn` now injects both parties' registered handles
+  into the jury prompt, so `responsible_party` attribution grounds in
+  a verified out-of-band identity instead of free-text guessing.
+- New event kind `publisher_registered` for the on-chain event log.
+- 3 new tests: happy path, verified=false rejection, malformed URL.
+
+### 4. Contract-verifiable appeal (structured claims)
+
+- `appeal(nda_id, appeal_ground, evidence_url, evidence_timestamp,
+  context_notes)` — the ABI now enforces every claim's shape:
+  - `appeal_ground` MUST be one of `PRIOR_DISCLOSURE`,
+    `ATTRIBUTION_ERROR`, `KEYWORD_MISMATCH`.
+  - `evidence_url` MUST be an 8–500-char `http(s)://` URL.
+  - `PRIOR_DISCLOSURE` requires a non-zero `evidence_timestamp`
+    strictly BEFORE the NDA's `created_at` — enforced by the contract,
+    NOT the LLM.
+  - `context_notes` is a length-bounded advisory string that CANNOT be
+    the sole basis of an overturn.
+- `Appeal` dataclass grows `appeal_ground`, `evidence_url`,
+  `evidence_timestamp` fields. `counter_evidence` is now a
+  machine-readable JSON blob of the structured claim.
+- The appellate `leader_fn` fetches the appellant's `evidence_url`
+  inline (E010-safe) and emits a ground-specific prompt. The
+  `prompt_comparative` principle now agrees on
+  `evidence_supports_ground` too, so an unsupported claim cannot ride
+  through consensus.
+- New view `get_appeal_grounds() -> str` for the frontend enum select.
+- 5 new tests: unknown-ground rejection, non-http rejection, zero-
+  timestamp rejection, post-NDA timestamp rejection, pre-NDA happy
+  path with persistence check.
+
+### Tests
+
+- 22 → **32 tests, all green** (10 new).
+
+### Frontend
+
+- New page `/identity` (`frontend/app/identity/page.tsx`) — publishers
+  register handle + proof URL, contract verifies on-chain.
+- NDA detail appeal panel rewritten around the enum: dropdown for
+  `appeal_ground`, `evidence_url` field, conditional date picker for
+  `PRIOR_DISCLOSURE` (capped at NDA-creation-minus-one-day), optional
+  context notes.
+- Landing page + dashboard: `Identity` link added.
+- `frontend/lib/types.ts`: new `Appeal` and `PublisherIdentity` types.
+
+### Redeploy required
+
+`v0.2.19` (`0x817422E7aF4D86d848Bf9BC13b9A9c333CF341dd`) has the old
+`Appeal` storage shape and no `register_publisher_identity` or
+`get_appeal_grounds` methods. **Deploy `contracts/nda_sentinel.py` v0.2.20
+fresh on studionet, then update `NEXT_PUBLIC_CONTRACT_ADDRESS` in
+Vercel** — the new appeal + identity UI will fail against the old
+contract until the address swap is done.
+
+---
+
 ## [0.2.19.1] — 2026-08-02 — Frontend UX: surface the Report Leak flow
 
 Contract ABI is unchanged; no redeploy required. Pure frontend fix in

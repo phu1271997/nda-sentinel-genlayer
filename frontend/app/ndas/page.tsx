@@ -15,7 +15,7 @@ import { ConnectWalletButton } from "@/components/ConnectWalletButton"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { NDA } from "@/lib/types"
-import { AlertTriangle } from "lucide-react"
+import { AlertTriangle, BadgeCheck } from "lucide-react"
 
 export default function NDAsDashboard() {
   const [ndas, setNdas] = useState<NDA[]>([])
@@ -76,6 +76,15 @@ export default function NDAsDashboard() {
             <Button variant="destructive">
               <AlertTriangle className="w-4 h-4 mr-1" />
               Report Leak
+            </Button>
+          </Link>
+          <Link href="/identity">
+            <Button
+              variant="outline"
+              className="border-emerald-300 text-emerald-700 dark:text-emerald-400"
+            >
+              <BadgeCheck className="w-4 h-4 mr-1" />
+              Identity
             </Button>
           </Link>
           <ConnectWalletButton />

@@ -8,7 +8,7 @@ distributes stakes based on the verdict, with a full appeal cycle.
 - **Live App**: <https://nda-sentinel.vercel.app>
 - **Class Name**: `NDASentinel`
 - **Contract file**: [`contracts/nda_sentinel.py`](contracts/nda_sentinel.py)
-- **Contract pragma**: `v0.2.19`
+- **Contract pragma**: `v0.2.20`
 - **Changelog**: [CHANGELOG.md](CHANGELOG.md)
 - **Security model**: [SECURITY.md](SECURITY.md)
 - **Architecture deep-dive**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
@@ -17,7 +17,8 @@ distributes stakes based on the verdict, with a full appeal cycle.
 
 | Network    | Address | Explorer |
 |------------|---------|----------|
-| studionet  | `0x817422E7aF4D86d848Bf9BC13b9A9c333CF341dd` (v0.2.19) | [Open in Studio](https://studio.genlayer.com/?import-contract=0x817422E7aF4D86d848Bf9BC13b9A9c333CF341dd) |
+| studionet  | *(v0.2.20 — pending fresh deploy; frontend fallback still points at v0.2.19)* | [Deploy in Studio](https://studio.genlayer.com/contracts) |
+| studionet (previous) | `0x817422E7aF4D86d848Bf9BC13b9A9c333CF341dd` (v0.2.19) | [Open in Studio](https://studio.genlayer.com/?import-contract=0x817422E7aF4D86d848Bf9BC13b9A9c333CF341dd) |
 
 Prior addresses (superseded): `0xa39218…a7DE` (v0.2.18, 2026-07-30),
 `0x10562A17…6F09` (v0.2.17, 2026-07-17), `0x42969f64…F2e0` (2026-06-18,

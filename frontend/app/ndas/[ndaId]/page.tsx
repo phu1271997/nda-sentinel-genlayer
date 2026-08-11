@@ -36,6 +36,14 @@ export default function NDADetailPage() {
   const [isExpiring, setIsExpiring] = useState(false)
   const [isAppealing, setIsAppealing] = useState(false)
   const [isClaimingReward, setIsClaimingReward] = useState(false)
+  // v0.2.20 — structured appeal fields (contract enforces the enum and
+  // the PRIOR_DISCLOSURE timestamp gate; free-form prose is only allowed
+  // as advisory context_notes).
+  const [appealGround, setAppealGround] = useState<
+    "PRIOR_DISCLOSURE" | "ATTRIBUTION_ERROR" | "KEYWORD_MISMATCH"
+  >("PRIOR_DISCLOSURE")
+  const [appealEvidenceUrl, setAppealEvidenceUrl] = useState("")
+  const [appealEvidenceDate, setAppealEvidenceDate] = useState("")
   const [counterEvidence, setCounterEvidence] = useState("")
   const [withdrawable, setWithdrawable] = useState<string>("0")
   const [currentTimeMs, setCurrentTimeMs] = useState<number | null>(null)
@@ -208,7 +216,32 @@ export default function NDADetailPage() {
   }
 
   const handleAppeal = async () => {
-    if (!nda || !address || !counterEvidence.trim()) return;
+    if (!nda || !address) return;
+    const url = appealEvidenceUrl.trim();
+    if (!/^https?:\/\/.{4,}/.test(url)) {
+      alert("Evidence URL must be a valid http:// or https:// URL");
+      return;
+    }
+    let evidenceTs = 0n;
+    if (appealGround === "PRIOR_DISCLOSURE") {
+      if (!appealEvidenceDate) {
+        alert("PRIOR_DISCLOSURE requires an evidence publication date");
+        return;
+      }
+      const ms = Date.parse(appealEvidenceDate);
+      if (!Number.isFinite(ms) || ms <= 0) {
+        alert("Invalid evidence date");
+        return;
+      }
+      const seconds = BigInt(Math.floor(ms / 1000));
+      if (seconds >= BigInt(nda.created_at)) {
+        alert(
+          "PRIOR_DISCLOSURE evidence date must be strictly BEFORE the NDA's creation date",
+        );
+        return;
+      }
+      evidenceTs = seconds;
+    }
     setIsAppealing(true);
     try {
       const appealFee = BigInt(nda.slashed_amount) / 10n;
@@ -217,12 +250,20 @@ export default function NDADetailPage() {
           client.writeContract({
             address: CONTRACT_ADDRESS,
             functionName: "appeal",
-            args: [BigInt(nda.id), counterEvidence.trim()],
+            args: [
+              BigInt(nda.id),
+              appealGround,
+              url,
+              evidenceTs,
+              counterEvidence.trim(),
+            ],
             value: appealFee,
           }),
         { nondet: true },
       );
       setCounterEvidence("");
+      setAppealEvidenceUrl("");
+      setAppealEvidenceDate("");
       await fetchNDA(address);
     } catch (err) {
       console.error(err);
@@ -389,18 +430,93 @@ export default function NDADetailPage() {
         <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
           <CardContent className="p-6 space-y-4">
             <div>
-              <h3 className="font-bold text-amber-900 dark:text-amber-300">Appeal this verdict</h3>
+              <h3 className="font-bold text-amber-900 dark:text-amber-300">
+                Appeal this verdict (contract-verifiable)
+              </h3>
               <p className="text-sm text-amber-800 dark:text-amber-400">
-                Submit counter-evidence before {format(new Date(appealDeadlineMs), "PPp")} with a {formatGenAmount(BigInt(nda.slashed_amount) / 10n)} GEN appeal stake.
+                Submit before {format(new Date(appealDeadlineMs), "PPp")} with a{" "}
+                {formatGenAmount(BigInt(nda.slashed_amount) / 10n)} GEN appeal
+                stake. Every appeal declares one of three enum grounds and cites
+                an <b>evidence URL the appellate jury fetches on-chain</b>.
               </p>
             </div>
-            <Textarea
-              value={counterEvidence}
-              onChange={(event) => setCounterEvidence(event.target.value)}
-              maxLength={2000}
-              placeholder="Provide prior-publication or attribution evidence..."
-            />
-            <Button onClick={handleAppeal} disabled={isAppealing || !counterEvidence.trim()}>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold">Appeal ground</label>
+              <select
+                value={appealGround}
+                onChange={(e) =>
+                  setAppealGround(
+                    e.target.value as
+                      | "PRIOR_DISCLOSURE"
+                      | "ATTRIBUTION_ERROR"
+                      | "KEYWORD_MISMATCH",
+                  )
+                }
+                className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
+              >
+                <option value="PRIOR_DISCLOSURE">
+                  PRIOR_DISCLOSURE — the info was already public before the NDA
+                </option>
+                <option value="ATTRIBUTION_ERROR">
+                  ATTRIBUTION_ERROR — I am not the author of the suspect page
+                </option>
+                <option value="KEYWORD_MISMATCH">
+                  KEYWORD_MISMATCH — flagged wording is generic, not protected
+                </option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold">Evidence URL</label>
+              <input
+                type="url"
+                value={appealEvidenceUrl}
+                onChange={(e) => setAppealEvidenceUrl(e.target.value)}
+                placeholder="https://web.archive.org/web/2025.../..."
+                className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
+              />
+              <p className="text-xs text-slate-500">
+                Validators will fetch this URL via <code>gl.nondet.web.render</code> during
+                consensus. Prefer Wayback Machine snapshots for prior-disclosure claims.
+              </p>
+            </div>
+            {appealGround === "PRIOR_DISCLOSURE" && (
+              <div className="space-y-2">
+                <label className="text-sm font-semibold">
+                  Evidence publication date{" "}
+                  <span className="text-rose-600">(must be strictly before NDA creation)</span>
+                </label>
+                <input
+                  type="date"
+                  value={appealEvidenceDate}
+                  onChange={(e) => setAppealEvidenceDate(e.target.value)}
+                  max={format(
+                    new Date((parseInt(nda.created_at) - 86400) * 1000),
+                    "yyyy-MM-dd",
+                  )}
+                  className="rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
+                />
+                <p className="text-xs text-slate-500">
+                  NDA was created on{" "}
+                  {format(new Date(parseInt(nda.created_at) * 1000), "PPP")}. The
+                  contract itself rejects any date &ge; that day.
+                </p>
+              </div>
+            )}
+            <div className="space-y-2">
+              <label className="text-sm font-semibold">
+                Context notes <span className="text-slate-500 font-normal">(advisory, optional)</span>
+              </label>
+              <Textarea
+                value={counterEvidence}
+                onChange={(event) => setCounterEvidence(event.target.value)}
+                maxLength={2000}
+                placeholder="Short note the appellate jury reads alongside the evidence URL. Cannot be the sole basis of an overturn."
+              />
+            </div>
+            <Button
+              onClick={handleAppeal}
+              disabled={isAppealing || !appealEvidenceUrl.trim()}
+            >
               {isAppealing ? "Submitting appeal..." : "Submit Appeal"}
             </Button>
           </CardContent>
