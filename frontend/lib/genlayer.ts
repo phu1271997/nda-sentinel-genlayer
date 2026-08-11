@@ -16,7 +16,7 @@ export const WALLET_CHANGED_EVENT = "nda-sentinel:wallet-changed";
 export const STUDIONET_CHAIN_ID = studionet.id;
 export const STUDIONET_CHAIN_ID_HEX = "0x" + STUDIONET_CHAIN_ID.toString(16);
 export const STUDIONET_RPC_URL = "https://studio.genlayer.com/api";
-export const STUDIONET_EXPLORER_URL = "https://genlayer-explorer.vercel.app";
+export const STUDIONET_EXPLORER_URL = "https://explorer-studio.genlayer.com";
 
 export const CONTRACT_ADDRESS = (
   process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || FALLBACK_ADDRESS

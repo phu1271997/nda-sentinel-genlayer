@@ -48,19 +48,80 @@ export default function ReportLandingPage() {
     const userAddress = getAccountAddress()
     setAddress(userAddress)
     setMode(walletMode)
+    const userLower = userAddress.toLowerCase()
+
+    // Primary path — per-user index. See ndas/page.tsx for the fallback
+    // rationale (reverse-index vs full scan).
+    let indexHits: NDA[] = []
     try {
       const result = (await client.readContract({
         address: CONTRACT_ADDRESS,
         functionName: "get_user_ndas",
         args: [toCalldataAddress(userAddress)],
       })) as string
-      setMyNdas(result ? (JSON.parse(result) as NDA[]) : [])
+      if (result) indexHits = JSON.parse(result) as NDA[]
     } catch (err) {
-      console.error("Failed to fetch NDAs", err)
-      setMyNdas([])
-    } finally {
-      setLoading(false)
+      console.warn("get_user_ndas failed, falling back to scan", err)
     }
+
+    // Full-scan fallback.
+    let scanHits: NDA[] = []
+    try {
+      const statsJson = (await client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: "get_stats",
+        args: [],
+      })) as string
+      const stats = statsJson ? JSON.parse(statsJson) : { total_ndas_created: "0" }
+      const total = Number(stats.total_ndas_created || 0)
+      if (total > 0) {
+        const cap = Math.min(total, 200)
+        const rows = await Promise.all(
+          Array.from({ length: cap }, (_, i) => i).map(async (id) => {
+            try {
+              const nda = (await client.readContract({
+                address: CONTRACT_ADDRESS,
+                functionName: "get_nda",
+                args: [BigInt(id)],
+              })) as {
+                id: bigint; party_a: string; party_b: string; scope: string;
+                status: NDA["status"]; stake_a: bigint; stake_b: bigint;
+                expiry_timestamp: bigint;
+              }
+              const aLower = nda.party_a.toLowerCase()
+              const bLower = nda.party_b.toLowerCase()
+              if (aLower !== userLower && bLower !== userLower) return null
+              return {
+                id: nda.id.toString(),
+                party_a: nda.party_a,
+                party_b: nda.party_b,
+                scope: nda.scope,
+                status: nda.status,
+                stake_a: nda.stake_a.toString(),
+                stake_b: nda.stake_b.toString(),
+                expiry_timestamp: nda.expiry_timestamp.toString(),
+              } as NDA
+            } catch {
+              return null
+            }
+          }),
+        )
+        scanHits = rows.filter((r): r is NDA => r !== null)
+      }
+    } catch (err) {
+      console.warn("scan fallback failed", err)
+    }
+
+    const seen = new Set<string>()
+    const merged: NDA[] = []
+    for (const n of [...indexHits, ...scanHits]) {
+      if (!seen.has(n.id)) {
+        seen.add(n.id)
+        merged.push(n)
+      }
+    }
+    setMyNdas(merged)
+    setLoading(false)
   }, [])
 
   useEffect(() => {

@@ -35,6 +35,15 @@ export default function NDAsDashboard() {
     const userAddress = getAccountAddress()
     setAddress(userAddress)
     setMode(walletMode)
+    const userLower = userAddress.toLowerCase()
+
+    // Primary path: per-user reverse index. This is O(1) but relies on the
+    // Address-keyed TreeMap `user_nda_ids_json` matching the calldata
+    // Address the frontend encodes — a mismatch (checksum casing, SDK
+    // encoding change) would silently return "[]" and hide the user's
+    // NDAs. That happened to reviewers on v0.2.20 immediately after the
+    // fresh redeploy, so we back the primary path with a full scan.
+    let indexHits: NDA[] = []
     try {
       const result = (await client.readContract({
         address: CONTRACT_ADDRESS,
@@ -42,15 +51,74 @@ export default function NDAsDashboard() {
         args: [toCalldataAddress(userAddress)],
       })) as string
       if (result) {
-        setNdas(JSON.parse(result))
-      } else {
-        setNdas([])
+        indexHits = JSON.parse(result) as NDA[]
       }
     } catch (err) {
-      console.error("Failed to fetch NDAs", err)
-    } finally {
-      setLoading(false)
+      console.warn("get_user_ndas failed, falling back to scan", err)
     }
+
+    // Fallback: read the total NDA count and iterate every id, filtering
+    // by whether the user is party_a or party_b. Works regardless of the
+    // reverse index and guarantees no NDA is missed.
+    let scanHits: NDA[] = []
+    try {
+      const statsJson = (await client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: "get_stats",
+        args: [],
+      })) as string
+      const stats = statsJson ? JSON.parse(statsJson) : { total_ndas_created: "0" }
+      const total = Number(stats.total_ndas_created || 0)
+      if (total > 0) {
+        const cap = Math.min(total, 200) // safety cap for a first-load scan
+        const rows = await Promise.all(
+          Array.from({ length: cap }, (_, i) => i).map(async (id) => {
+            try {
+              const nda = (await client.readContract({
+                address: CONTRACT_ADDRESS,
+                functionName: "get_nda",
+                args: [BigInt(id)],
+              })) as {
+                id: bigint; party_a: string; party_b: string; scope: string;
+                status: NDA["status"]; stake_a: bigint; stake_b: bigint;
+                expiry_timestamp: bigint;
+              }
+              const aLower = nda.party_a.toLowerCase()
+              const bLower = nda.party_b.toLowerCase()
+              if (aLower !== userLower && bLower !== userLower) return null
+              return {
+                id: nda.id.toString(),
+                party_a: nda.party_a,
+                party_b: nda.party_b,
+                scope: nda.scope,
+                status: nda.status,
+                stake_a: nda.stake_a.toString(),
+                stake_b: nda.stake_b.toString(),
+                expiry_timestamp: nda.expiry_timestamp.toString(),
+              } as NDA
+            } catch {
+              return null
+            }
+          }),
+        )
+        scanHits = rows.filter((r): r is NDA => r !== null)
+      }
+    } catch (err) {
+      console.warn("scan fallback failed", err)
+    }
+
+    // Union by id — index hits kept first (they're already sorted by
+    // insertion time), scan hits fill in anything the index missed.
+    const seen = new Set<string>()
+    const merged: NDA[] = []
+    for (const n of [...indexHits, ...scanHits]) {
+      if (!seen.has(n.id)) {
+        seen.add(n.id)
+        merged.push(n)
+      }
+    }
+    setNdas(merged)
+    setLoading(false)
   }, [])
 
   useEffect(() => {
