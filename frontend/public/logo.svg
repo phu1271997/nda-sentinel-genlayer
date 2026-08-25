@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1B1230"/>
+      <stop offset="1" stop-color="#09060F"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#F0A5C0"/>
+      <stop offset="0.4" stop-color="#C58AF9"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.6">
+      <stop offset="0" stop-color="#8B5CF6" stop-opacity="0.42"/>
+      <stop offset="0.6" stop-color="#8B5CF6" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#8B5CF6" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="shieldClip">
+      <path d="M256 84 L392 132 V262 C392 342 336 402 256 432 C176 402 120 342 120 262 V132 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Rounded-square background with subtle radial glow -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="112" fill="url(#glow)"/>
+
+  <!-- Scan-ring motif clipped to the shield silhouette:
+       three concentric arcs = the AI jury scanning the web for a leak. -->
+  <g clip-path="url(#shieldClip)" fill="none" stroke="url(#mark)"
+     stroke-linecap="round" opacity="0.95">
+    <circle cx="256" cy="262" r="118" stroke-width="16"/>
+    <circle cx="256" cy="262" r="82"  stroke-width="14"/>
+    <circle cx="256" cy="262" r="42"  stroke-width="14"/>
+    <!-- central "eye" spark -->
+    <circle cx="256" cy="262" r="10" fill="url(#mark)" stroke="none"/>
+    <!-- diagonal scan line — like a magnifier handle, ties into "detection" -->
+    <path d="M328 334 L392 398" stroke-width="24"/>
+  </g>
+
+  <!-- Shield stroke on top so the mark reads as ONE silhouette -->
+  <path d="M256 84 L392 132 V262 C392 342 336 402 256 432 C176 402 120 342 120 262 V132 Z"
+        fill="none" stroke="url(#mark)" stroke-width="26" stroke-linejoin="round"/>
+</svg>

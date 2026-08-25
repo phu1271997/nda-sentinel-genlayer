@@ -16,6 +16,7 @@ import {
 } from "@/lib/genlayer"
 import { ConnectWalletButton } from "@/components/ConnectWalletButton"
 import { EventTimeline } from "@/components/EventTimeline"
+import { LeakHistoryPanel } from "@/components/LeakHistoryPanel"
 import { ReputationBadge } from "@/components/ReputationBadge"
 import { StatusBadge } from "@/components/StatusBadge"
 import { VerdictPanel } from "@/components/VerdictPanel"
@@ -35,6 +36,7 @@ export default function NDADetailPage() {
   const [address, setAddress] = useState<string | null>(null)
   const [isActivating, setIsActivating] = useState(false)
   const [isExpiring, setIsExpiring] = useState(false)
+  const [isCancelling, setIsCancelling] = useState(false)
   const [isAppealing, setIsAppealing] = useState(false)
   const [isClaimingReward, setIsClaimingReward] = useState(false)
   // v0.2.20 — structured appeal fields (contract enforces the enum and
@@ -174,6 +176,27 @@ export default function NDADetailPage() {
       alert("Error activating NDA: " + (err instanceof Error ? err.message : String(err)));
     } finally {
       setIsActivating(false);
+    }
+  }
+
+  const handleCancelPending = async () => {
+    if (!nda || !address) return;
+    setIsCancelling(true);
+    try {
+      await runWrite(() =>
+        client.writeContract({
+          address: CONTRACT_ADDRESS,
+          functionName: "cancel_pending_nda",
+          args: [BigInt(nda.id)],
+          value: BigInt(0),
+        }),
+      );
+      await fetchNDA(address);
+    } catch (err) {
+      console.error(err);
+      alert(parseContractError(err));
+    } finally {
+      setIsCancelling(false);
     }
   }
 
@@ -333,6 +356,13 @@ export default function NDADetailPage() {
   // anyone after the rescue window — the contract enforces the exact auth
   // rule; the UI just surfaces the button to anyone who could plausibly call.
   const rewardClaimable = currentTimeMs !== null && nda.status === "leaked" && (isReporter || isPartyA || isPartyB) && appealDeadlineMs > 0 && currentTimeMs >= appealDeadlineMs;
+  // v0.2.20.2 — Party A can cancel a pending NDA and reclaim their stake
+  // after 7 days if Party B never activates. Contract: cancel_pending_nda.
+  const cancelDeadlineMs = (parseInt(nda.created_at) + 7 * 24 * 60 * 60) * 1000;
+  const cancelPendingAvailable = nda.status === "pending" && isPartyA && currentTimeMs !== null && currentTimeMs >= cancelDeadlineMs;
+  const cancelPendingCountdownDays = nda.status === "pending" && isPartyA && currentTimeMs !== null && currentTimeMs < cancelDeadlineMs
+    ? Math.ceil((cancelDeadlineMs - currentTimeMs) / (24 * 60 * 60 * 1000))
+    : null;
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl space-y-8">
@@ -426,6 +456,11 @@ export default function NDADetailPage() {
       {nda.status === "leaked" && parsedVerdict && (
         <VerdictPanel verdict={parsedVerdict} />
       )}
+
+      {/* Show past leak reports for NDAs still in non-leaked state
+          (no_violation / inconclusive verdicts don't persist verdict_json
+          on-chain — the record lives in the event log instead). */}
+      {nda.status !== "leaked" && <LeakHistoryPanel ndaId={nda.id} />}
 
       {appealOpen && isViolator && (
         <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
@@ -546,25 +581,47 @@ export default function NDADetailPage() {
       )}
 
       {/* ACTION AREA */}
-      <div className="pt-4 flex justify-center gap-4">
-        {nda.status === "pending" && isPartyB && (
-          <Button size="lg" onClick={handleActivate} disabled={isActivating}>
-            {isActivating ? "Activating..." : `Activate & Stake ${formatGenAmount(nda.stake_a)} GEN`}
-          </Button>
-        )}
-        
-        {nda.status === "active" && (isPartyA || isPartyB) && !isExpired && (
-          <Link href={`/ndas/${nda.id}/report`}>
-            <Button size="lg" variant="destructive">
-              Report Leak
+      <div className="pt-4 flex flex-col items-center gap-4">
+        <div className="flex justify-center gap-4 flex-wrap">
+          {nda.status === "pending" && isPartyB && (
+            <Button size="lg" onClick={handleActivate} disabled={isActivating}>
+              {isActivating ? "Activating..." : `Activate & Stake ${formatGenAmount(nda.stake_a)} GEN`}
             </Button>
-          </Link>
-        )}
+          )}
 
-        {nda.status === "active" && isExpired && (isPartyA || isPartyB) && (
-          <Button size="lg" onClick={handleExpire} disabled={isExpiring}>
-            {isExpiring ? "Processing..." : "Expire & Withdraw Stake"}
-          </Button>
+          {nda.status === "active" && (isPartyA || isPartyB) && !isExpired && (
+            <Link href={`/ndas/${nda.id}/report`}>
+              <Button size="lg" variant="destructive">
+                Report Leak
+              </Button>
+            </Link>
+          )}
+
+          {nda.status === "active" && isExpired && (isPartyA || isPartyB) && (
+            <Button size="lg" onClick={handleExpire} disabled={isExpiring}>
+              {isExpiring ? "Processing..." : "Expire & Withdraw Stake"}
+            </Button>
+          )}
+
+          {cancelPendingAvailable && (
+            <Button
+              size="lg"
+              variant="outline"
+              onClick={handleCancelPending}
+              disabled={isCancelling}
+            >
+              {isCancelling ? "Cancelling..." : "Cancel & Refund Stake"}
+            </Button>
+          )}
+        </div>
+
+        {cancelPendingCountdownDays !== null && (
+          <p className="text-xs text-slate-500 text-center max-w-lg">
+            Party B has not activated yet. As Party A, you can cancel this NDA
+            and reclaim your stake in{" "}
+            <b>{cancelPendingCountdownDays} day{cancelPendingCountdownDays === 1 ? "" : "s"}</b>{" "}
+            if activation still has not happened by then.
+          </p>
         )}
       </div>
 

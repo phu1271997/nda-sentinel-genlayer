@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local seed scripts (may reference throwaway keys)
+_seed/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
