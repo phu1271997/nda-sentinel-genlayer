@@ -42,6 +42,29 @@ export interface PublisherIdentity {
     verified_at: string;
 }
 
+export type EventKind =
+    | "nda_created"
+    | "nda_activated"
+    | "nda_cancelled"
+    | "leak_reported"
+    | "violation_confirmed"
+    | "appeal_filed"
+    | "appeal_overturned"
+    | "appeal_upheld"
+    | "verdict_finalized"
+    | "nda_expired"
+    | "withdraw"
+    | "publisher_registered";
+
+export interface ContractEvent {
+    seq: string;
+    kind: EventKind;
+    nda_id: string;
+    actor: string;
+    timestamp: string;
+    meta_json: string;
+}
+
 export interface Verdict {
     verdict: "violation_confirmed" | "no_violation" | "inconclusive";
     confidence: number;

@@ -9,6 +9,35 @@ resubmission-review feedback item(s) it addresses.
 
 ---
 
+## [0.2.20.1] — 2026-08-25 — Frontend: on-chain event timeline + README v0.2.20 sync
+
+Contract ABI is unchanged; no redeploy required. Frontend-only surface
+of the event log the v0.2.19 contract already emits, plus a documentation
+sync so the top-level README reflects the actual deployed pragma.
+
+### Frontend
+- **New `EventTimeline` component** (`frontend/components/EventTimeline.tsx`)
+  — renders the on-chain event log for a single NDA via
+  `get_events_for_nda(nda_id)`. All 11 event kinds
+  (`nda_created`, `nda_activated`, `nda_cancelled`, `leak_reported`,
+  `violation_confirmed`, `appeal_filed`, `appeal_overturned`,
+  `appeal_upheld`, `verdict_finalized`, `nda_expired`, `withdraw`) plus
+  `publisher_registered` get their own icon, colour, timestamp, actor
+  link, and typed `meta_json` summary (stakes/reward/appeal ground/etc.
+  formatted from wei to GEN).
+- **NDA detail page** (`frontend/app/ndas/[ndaId]/page.tsx`) — hooks the
+  timeline into the bottom of every NDA page so reviewers can trace the
+  full lifecycle without cross-referencing tx hashes on the explorer.
+- **`ContractEvent` + `EventKind` types** added to
+  `frontend/lib/types.ts`.
+
+### Docs
+- README `## Core Protocol Upgrades` rewritten around v0.2.20 (was
+  frozen on v0.2.18 wording); test count updated 14 → 32; contract
+  pragma line already correct.
+
+---
+
 ## [0.2.20] — 2026-08-11 — Reviewer round 3: lint + focused fetch test + publisher identity + contract-verifiable appeal
 
 Addresses the four items from the round-3 reviewer note:

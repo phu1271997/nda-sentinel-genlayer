@@ -15,6 +15,7 @@ import {
   WalletNotReadyError,
 } from "@/lib/genlayer"
 import { ConnectWalletButton } from "@/components/ConnectWalletButton"
+import { EventTimeline } from "@/components/EventTimeline"
 import { ReputationBadge } from "@/components/ReputationBadge"
 import { StatusBadge } from "@/components/StatusBadge"
 import { VerdictPanel } from "@/components/VerdictPanel"
@@ -566,6 +567,19 @@ export default function NDADetailPage() {
           </Button>
         )}
       </div>
+
+      <Card>
+        <CardContent className="p-6">
+          <div className="mb-4">
+            <h3 className="text-lg font-semibold">On-chain event log</h3>
+            <p className="text-xs text-slate-500">
+              Every state transition emits an event via <code>_emit()</code>.
+              Read from the contract with <code>get_events_for_nda</code>.
+            </p>
+          </div>
+          <EventTimeline ndaId={nda.id} />
+        </CardContent>
+      </Card>
     </div>
   )
 }

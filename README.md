@@ -68,7 +68,7 @@ this is the "GenLayer fit" test in the Builders rubric.
 ```
 contracts/          # Intelligent Contract Python
 frontend/           # Next.js 16 App Router dApp
-tests/              # gltest suite (14 tests, all green)
+tests/              # gltest suite (32 tests, all green)
 docs/               # ARCHITECTURE, DETECTION_RUBRIC, ECONOMICS, PRIVACY
 deployment/         # deployed_addresses.json
 CHANGELOG.md        # semver-tagged history of contract + frontend changes
@@ -78,20 +78,36 @@ SECURITY.md         # threat model, invariants, audit checklist
 ## Core Protocol Upgrades
 
 Complete history is in [CHANGELOG.md](CHANGELOG.md). Highlights for the
-current version (**v0.2.18** — 2026-07-30):
+current version (**v0.2.20** — 2026-08-11):
 
-1. **Deadline gap closed**: `report_leak` now rejects reports on NDAs past
-   `expiry_timestamp`.
-2. **Replay guard reset on overturn**: a new legitimate accusation on a
-   previously-overturned NDA can still be appealed by its new violator.
-3. **Complete finalize path**: `finalize_verdict(nda_id)` callable by
-   reporter, either party, or anyone after a rescue window — the
-   non-violator's 17 % compensation share is no longer stranded when the
-   reporter walks away.
-4. **Conservation invariant**: `get_nda_liabilities` exposes
+1. **genvm-lint E010 refactor**: every `gl.nondet.web.render` call is
+   lexically inside its `eq_principle` closure — no nested helper — so the
+   static linter recognises each fetch as a direct nondet call.
+2. **Publisher identity authentication**:
+   `register_publisher_identity(handle, proof_url)` fetches the proof URL
+   inside `eq_principle.prompt_comparative` and only writes the mapping
+   when validators agree the page carries BOTH the handle and the caller's
+   lowercase hex address. Registered handles are injected into the leak
+   jury prompt so attribution grounds in a verified out-of-band identity.
+3. **Contract-verifiable appeals**:
+   `appeal(nda_id, appeal_ground, evidence_url, evidence_timestamp,
+   context_notes)` enforces an enum ground
+   (`PRIOR_DISCLOSURE` / `ATTRIBUTION_ERROR` / `KEYWORD_MISMATCH`), an
+   `http(s)://` evidence URL, and a strictly-pre-NDA `evidence_timestamp`
+   for `PRIOR_DISCLOSURE` — the LLM is never asked to reason about dates.
+4. **Multi-source cross-reference verdict** (v0.2.19 base): `report_leak`
+   fetches PRIMARY + WAYBACK + GOOGLE inside `leader_fn`; validators must
+   agree on `sources_confirming ± 1` too, so a bogus corroborating claim
+   cannot ride through consensus.
+5. **Reputation + on-chain event log** (v0.2.19 base): every address has a
+   score keyed by `str` (R19); `events: DynArray[Event]` records 11 event
+   kinds across the full NDA lifecycle, exposed via
+   `get_events_for_nda(nda_id)` for the frontend timeline.
+6. **Payment-conservation invariant**: `get_nda_liabilities` exposes
    `active_stakes + escrows + party_withdrawables + treasury`, exercised
-   by two new lifecycle tests.
-5. **Frontend wallet compliance (R21–R24)**: MetaMask is the primary
+   by lifecycle tests. Complete finalize path callable by reporter, either
+   party, or anyone after a rescue window.
+7. **Frontend wallet compliance (R21–R24)**: MetaMask is the primary
    signer; `wallet_switchEthereumChain` fires on connect; chain id is read
    from `studionet.id`; the local burner is kept as a demo-only fallback
    with a big amber warning.
@@ -130,10 +146,12 @@ current version (**v0.2.18** — 2026-07-30):
 gltest
 ```
 
-Runs the 14 tests in `tests/test_nda_sentinel.py`, including four
-payment-conservation lifecycle tests and a two-cycle appeal-replay test
-covering the review feedback. Requires `genlayer-test` in the Python
-environment.
+Runs the 32 tests in `tests/test_nda_sentinel.py`, including four
+payment-conservation lifecycle tests, a two-cycle appeal-replay test,
+5 reputation tests, 3 event-log tests, 3 publisher-identity tests, 5
+structured-appeal tests, and a focused test proving the real
+`web.render` fetch executes inside the equivalence-principle flow.
+Requires `genlayer-test` in the Python environment.
 
 ## Where to find the leak-report flow (for reviewers)
 
