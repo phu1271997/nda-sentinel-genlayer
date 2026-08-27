@@ -910,3 +910,68 @@ def test_appeal_grounds_view_lists_all_enum_values(
     contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
     grounds = json.loads(contract.get_appeal_grounds())
     assert set(grounds) == {"PRIOR_DISCLOSURE", "ATTRIBUTION_ERROR", "KEYWORD_MISMATCH"}
+
+
+# --- Fast smoke tests (added 2026-08-27) ------------------------------------
+#
+# These deploy a fresh contract but never trigger nondet consensus, so they
+# stay under ~1s each and belong in the `fast` bucket. They pin the shape of
+# the read-only surface the frontend consumes so a schema regression fails
+# the test suite before it ever fails the dashboard.
+
+def test_stats_view_zeroed_on_fresh_deploy(direct_vm, direct_deploy, direct_alice):
+    warp(direct_vm, 0)
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/nda_sentinel.py")
+    stats = json.loads(contract.get_stats())
+    for key in (
+        "total_ndas_created",
+        "total_violations_confirmed",
+        "total_value_slashed",
+        "total_appeals_overturned",
+        "total_appeals_upheld",
+        "total_report_fees_collected",
+        "treasury",
+    ):
+        assert stats[key] in ("0", 0), f"expected zero for {key}, got {stats[key]!r}"
+
+
+def test_reputation_thresholds_expose_config_constants(
+    direct_vm, direct_deploy, direct_alice,
+):
+    warp(direct_vm, 0)
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/nda_sentinel.py")
+    thresholds = json.loads(contract.get_reputation_thresholds())
+    assert thresholds["baseline"] == 1000
+    assert thresholds["verified"] == 1200
+    assert thresholds["trusted"] == 1050
+    assert thresholds["flagged"] == 800
+
+
+def test_events_view_empty_on_fresh_deploy(direct_vm, direct_deploy, direct_alice):
+    warp(direct_vm, 0)
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/nda_sentinel.py")
+    assert int(contract.get_events_count()) == 0
+    assert json.loads(contract.get_events(0, 10)) == []
+
+
+def test_events_for_nda_empty_for_unknown_id(direct_vm, direct_deploy, direct_alice):
+    warp(direct_vm, 0)
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/nda_sentinel.py")
+    assert json.loads(contract.get_events_for_nda(999)) == []
+
+
+def test_publisher_identity_view_empty_before_registration(
+    direct_vm, direct_deploy, direct_alice,
+):
+    warp(direct_vm, 0)
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/nda_sentinel.py")
+    from genlayer import Address
+    result = contract.get_publisher_identity(Address(as_hex(direct_alice)))
+    # Empty means "no registered handle yet" — the wizard renders this as
+    # the "Register identity" CTA rather than a green checkmark.
+    assert result in ("", None)
