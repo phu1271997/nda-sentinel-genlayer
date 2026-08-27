@@ -9,6 +9,54 @@ resubmission-review feedback item(s) it addresses.
 
 ---
 
+## [0.2.20.2] — 2026-08-27 — Explorer-ready landing polish + test bucketing
+
+Frontend-only + tests-only. Contract ABI unchanged; no redeploy required.
+
+### Frontend
+- **Sticky glassy top nav** (`frontend/components/SiteHeader.tsx`) —
+  same brand across every route, active-route highlight, mobile
+  disclosure, live `studionet` badge next to the logo. Replaces the
+  per-page inline `<header>` that lived on the landing page only.
+- **Rich 4-column site footer** (`frontend/components/SiteFooter.tsx`)
+  — Product / Protocol / Resources / Community columns, contract
+  address auto-links to Explorer, network + chainId + license line at
+  the bottom. Replaces the old one-line `ContractInfoFooter` (removed).
+- **Landing rewrite** (`frontend/app/page.tsx`) — hero + live stats
+  card, problem breakdown ($200k–$2M / 18–36 months / judgment ≠
+  collection), 5-step how-it-works with per-step CTA, on-chain
+  live-state grid, 8 consensus-signal callouts, ASCII architecture
+  diagram, use-cases, traditional-NDA-vs-us compare table,
+  reviewer-focused "how to try it in 3 steps", 6-item FAQ, final CTA.
+- **Live protocol stats** (`frontend/lib/onchain-stats.ts`) — server
+  component fetches `get_stats` + `get_events_count` from studionet
+  RPC on every render with `revalidate: 60`; the numbers on the
+  landing page are the actual on-chain state.
+- **Global layout** (`frontend/app/layout.tsx`) — `SiteHeader` +
+  `SiteFooter` mounted once so every route inherits the same shell.
+  OpenGraph metadata added.
+
+### Tests
+- **Fast / slow bucket split** (`tests/conftest.py`) — every existing
+  test auto-tagged; multi-cycle payment/reputation/event lifecycle
+  tests get `@slow`, everything else gets `@fast`. Run either bucket
+  with `gltest -m fast` or `gltest -m slow`.
+- **5 new read-only smoke tests** (appended to
+  `tests/test_nda_sentinel.py`) — pin the shape of
+  `get_stats`, `get_reputation_thresholds`, `get_events`,
+  `get_events_for_nda`, and `get_publisher_identity` on a fresh
+  deploy. These fail the suite before a schema drift ever reaches the
+  dashboard.
+- **`tests/README.md`** — marker map + run examples.
+
+### Docs / Deliverables
+- `deliverables/SUBMISSION.md` — Explorer submission draft with hard
+  character counts for every capped field.
+- `deliverables/logo-1024.png` / `logo-512.png` reused from
+  `frontend/public/`.
+
+---
+
 ## [0.2.20.1] — 2026-08-25 — Frontend: on-chain event timeline + README v0.2.20 sync
 
 Contract ABI is unchanged; no redeploy required. Frontend-only surface
