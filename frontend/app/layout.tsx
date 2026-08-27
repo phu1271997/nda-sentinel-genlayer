@@ -4,7 +4,8 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SnapsBypassInitializer } from "@/components/SnapsBypassInitializer";
-import { ContractInfoFooter } from "@/components/ContractInfoFooter";
+import { SiteHeader } from "@/components/SiteHeader";
+import { SiteFooter } from "@/components/SiteFooter";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -17,8 +18,18 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NDA Sentinel",
-  description: "NDA enforcement at the speed of consensus. AI Jury detects leaks.",
+  title: "NDA Sentinel — Trustless NDA enforcement on GenLayer",
+  description:
+    "AI Jury reads the suspect URL on-chain and reaches consensus on the verdict; the contract slashes and distributes stakes atomically. No $200k lawsuits, no 24-month waits.",
+  metadataBase: new URL("https://nda-sentinel.vercel.app"),
+  openGraph: {
+    title: "NDA Sentinel — Trustless NDA enforcement on GenLayer",
+    description:
+      "AI Jury adjudicates NDA leaks on-chain via GenLayer consensus. Multi-source fetch + reputation + structured appeals.",
+    url: "https://nda-sentinel.vercel.app",
+    siteName: "NDA Sentinel",
+    type: "website",
+  },
 };
 
 export default function RootLayout({
@@ -40,10 +51,11 @@ export default function RootLayout({
           <TooltipProvider>
             <div className="flex flex-col min-h-screen">
               <SnapsBypassInitializer />
+              <SiteHeader />
               <main className="flex-1 flex flex-col">
                 {children}
               </main>
-              <ContractInfoFooter />
+              <SiteFooter />
             </div>
           </TooltipProvider>
         </ThemeProvider>
