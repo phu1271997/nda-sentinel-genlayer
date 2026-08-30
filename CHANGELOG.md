@@ -9,6 +9,36 @@ resubmission-review feedback item(s) it addresses.
 
 ---
 
+## [0.2.21.1] — 2026-08-30 — UX Enhancement + Analytics Dashboard
+
+Frontend-only. Contract ABI unchanged; no redeploy required.
+
+### Frontend
+- **Analytics dashboard** (`frontend/app/analytics/page.tsx`) — new
+  `/analytics` route with server-fetched on-chain data: 4 stat cards
+  (total NDAs, violations confirmed, value slashed, treasury), 3 health
+  metrics (detection rate, appeal overturn rate, event count), recharts
+  event breakdown bar chart, appeal outcome pie chart. Data refreshes
+  every 60 s via studionet RPC.
+- **NDA lifecycle stepper** (`frontend/components/NDALifecycleStepper.tsx`)
+  — visual horizontal stepper on `/ndas/[ndaId]` detail page showing
+  Pending → Active → Reported → Appealed → Finalized with current state
+  highlighted. Terminal states (Expired, Cancelled) render as a single
+  pill.
+- **Analytics charts** (`frontend/components/AnalyticsCharts.tsx`) —
+  client component: recharts `BarChart` for event breakdown by type,
+  `PieChart` for appeal outcomes, color-coded per event kind.
+- **Navigation** — "Analytics" link with chart icon added to site header.
+- **Accessibility** — skip-to-content link in root layout, `role="main"`
+  + `id="main-content"` on `<main>`, ARIA `role="list"` on lifecycle
+  stepper.
+- **SEO** — `robots.txt` + Next.js `sitemap.ts` covering all 7 routes.
+- **Event data layer** (`frontend/lib/onchain-stats.ts`) —
+  `fetchEventBreakdown()` fetches up to 200 events via
+  `get_events(offset, limit)` and aggregates by kind.
+
+---
+
 ## [0.2.21] — 2026-08-30 — Security Hardening Bundle v1
 
 **Contract change — redeploy required.**

@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://nda-sentinel.vercel.app/sitemap.xml

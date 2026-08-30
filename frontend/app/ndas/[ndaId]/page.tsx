@@ -19,6 +19,7 @@ import { EventTimeline } from "@/components/EventTimeline"
 import { LeakHistoryPanel } from "@/components/LeakHistoryPanel"
 import { ReputationBadge } from "@/components/ReputationBadge"
 import { StatusBadge } from "@/components/StatusBadge"
+import { NDALifecycleStepper } from "@/components/NDALifecycleStepper"
 import { VerdictPanel } from "@/components/VerdictPanel"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -378,6 +379,8 @@ export default function NDADetailPage() {
         </div>
         <ConnectWalletButton />
       </div>
+
+      <NDALifecycleStepper status={nda.status} />
 
       {lastTxHash && (
         <div className="rounded border bg-slate-50 dark:bg-slate-900/40 text-xs px-3 py-2 flex items-center justify-between">

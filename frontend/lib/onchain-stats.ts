@@ -71,6 +71,88 @@ async function callView(method: string): Promise<unknown> {
   return body.result
 }
 
+async function callViewWithArgs(method: string, args: unknown[]): Promise<unknown> {
+  const res = await fetch(STUDIONET_RPC_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "gen_call",
+      params: [
+        {
+          to: CONTRACT_ADDRESS,
+          data: {
+            method,
+            args,
+          },
+        },
+        "latest",
+      ],
+    }),
+    cache: "no-store",
+    next: { revalidate: 60 },
+  })
+  if (!res.ok) throw new Error(`RPC ${res.status}`)
+  const body = await res.json()
+  if (body.error) throw new Error(String(body.error.message || body.error))
+  return body.result
+}
+
+export interface EventBreakdown {
+  kind: string
+  count: number
+  label: string
+}
+
+const EVENT_LABELS: Record<string, string> = {
+  nda_created: "NDAs created",
+  nda_activated: "NDAs activated",
+  nda_cancelled: "NDAs cancelled",
+  leak_reported: "Leaks reported",
+  violation_confirmed: "Violations confirmed",
+  appeal_filed: "Appeals filed",
+  appeal_overturned: "Appeals overturned",
+  appeal_upheld: "Appeals upheld",
+  verdict_finalized: "Verdicts finalized",
+  nda_expired: "NDAs expired",
+  withdraw: "Withdrawals",
+  publisher_registered: "Publishers registered",
+}
+
+export async function fetchEventBreakdown(): Promise<EventBreakdown[]> {
+  try {
+    const countRaw = await callView("get_events_count")
+    const count = Number(
+      typeof countRaw === "string" || typeof countRaw === "number"
+        ? countRaw
+        : (countRaw as { toString?: () => string })?.toString?.() ?? 0,
+    )
+    if (!Number.isFinite(count) || count === 0) return []
+
+    const limit = Math.min(count, 200)
+    const eventsRaw = await callViewWithArgs("get_events", [0, limit])
+    const eventsStr =
+      typeof eventsRaw === "string" ? eventsRaw : JSON.stringify(eventsRaw)
+    const events = JSON.parse(eventsStr) as { kind: string }[]
+
+    const counts: Record<string, number> = {}
+    for (const ev of events) {
+      counts[ev.kind] = (counts[ev.kind] || 0) + 1
+    }
+
+    return Object.entries(counts)
+      .map(([kind, c]) => ({
+        kind,
+        count: c,
+        label: EVENT_LABELS[kind] || kind.replace(/_/g, " "),
+      }))
+      .sort((a, b) => b.count - a.count)
+  } catch {
+    return []
+  }
+}
+
 export async function fetchProtocolStats(): Promise<ProtocolStats> {
   try {
     const [statsRaw, eventsRaw] = await Promise.all([

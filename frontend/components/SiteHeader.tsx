@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { AlertTriangle, BadgeCheck, LucideIcon, Menu, Shield, X } from "lucide-react"
+import { AlertTriangle, BadgeCheck, BarChart3, LucideIcon, Menu, Shield, X } from "lucide-react"
 import { useEffect, useState } from "react"
 
 type NavItem = {
@@ -17,6 +17,7 @@ const NAV: NavItem[] = [
   { href: "/report", label: "Report Leak", accent: "rose", icon: AlertTriangle },
   { href: "/identity", label: "Identity", accent: "emerald", icon: BadgeCheck },
   { href: "/violations", label: "Verdicts" },
+  { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ]
 
 export function SiteHeader() {
