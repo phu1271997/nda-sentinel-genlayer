@@ -975,3 +975,105 @@ def test_publisher_identity_view_empty_before_registration(
     # Empty means "no registered handle yet" — the wizard renders this as
     # the "Register identity" CTA rather than a green checkmark.
     assert result in ("", None)
+
+
+# --- Security hardening v0.2.21 tests ----------------------------------------
+
+def test_create_nda_rejects_duplicate_keyword_hashes(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    warp(direct_vm, 0)
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/nda_sentinel.py")
+    dup_hash = hashlib.sha256(("kw1" + SALT).encode()).hexdigest()
+    dup_hashes = json.dumps([dup_hash, dup_hash])
+    direct_vm.value = STAKE
+    with pytest.raises(Exception, match="Duplicate keyword hashes"):
+        contract.create_nda(
+            as_hex(direct_bob), SCOPE, CONTEXT,
+            int(START.timestamp()) + 30 * 24 * 60 * 60, dup_hashes,
+        )
+
+
+def test_create_nda_rejects_non_hex_keyword_hash(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    warp(direct_vm, 0)
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/nda_sentinel.py")
+    bad_hash = "g" * 64
+    direct_vm.value = STAKE
+    with pytest.raises(Exception, match="hex characters"):
+        contract.create_nda(
+            as_hex(direct_bob), SCOPE, CONTEXT,
+            int(START.timestamp()) + 30 * 24 * 60 * 60, json.dumps([bad_hash]),
+        )
+
+
+def test_create_nda_rejects_dust_stake(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    warp(direct_vm, 0)
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/nda_sentinel.py")
+    direct_vm.value = 1
+    with pytest.raises(Exception, match="at least"):
+        contract.create_nda(
+            as_hex(direct_bob), SCOPE, CONTEXT,
+            int(START.timestamp()) + 30 * 24 * 60 * 60, keyword_hashes(),
+        )
+
+
+def test_activate_nda_rejects_dust_stake(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    warp(direct_vm, 0)
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/nda_sentinel.py")
+    direct_vm.value = STAKE
+    nda_id = contract.create_nda(
+        as_hex(direct_bob), SCOPE, CONTEXT,
+        int(START.timestamp()) + 30 * 24 * 60 * 60, keyword_hashes(),
+    )
+    direct_vm.sender = direct_bob
+    direct_vm.value = 1
+    with pytest.raises(Exception, match="at least"):
+        contract.activate_nda(nda_id)
+
+
+def test_report_leak_rejects_non_http_url(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
+    direct_vm.sender = direct_alice
+    direct_vm.value = REPORT_FEE
+    with pytest.raises(Exception, match="http:// or https://"):
+        contract.report_leak(
+            0, "ftp://example.com/leak", json.dumps([KEYWORDS[0]]), SALT,
+        )
+
+
+def test_report_leak_rejects_overlong_url(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
+    direct_vm.sender = direct_alice
+    direct_vm.value = REPORT_FEE
+    long_url = "https://example.com/" + "a" * 2100
+    with pytest.raises(Exception, match="exceeds"):
+        contract.report_leak(0, long_url, json.dumps([KEYWORDS[0]]), SALT)
+
+
+def test_get_nda_count_tracks_creation(
+    direct_vm, direct_deploy, direct_alice, direct_bob,
+):
+    warp(direct_vm, 0)
+    direct_vm.sender = direct_alice
+    contract = direct_deploy("contracts/nda_sentinel.py")
+    assert int(contract.get_nda_count()) == 0
+    direct_vm.value = STAKE
+    contract.create_nda(
+        as_hex(direct_bob), SCOPE, CONTEXT,
+        int(START.timestamp()) + 30 * 24 * 60 * 60, keyword_hashes(),
+    )
+    assert int(contract.get_nda_count()) == 1

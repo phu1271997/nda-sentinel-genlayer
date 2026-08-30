@@ -1,4 +1,4 @@
-# v0.2.20
+# v0.2.21
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 from genlayer import *
 from dataclasses import dataclass
@@ -18,6 +18,9 @@ ALLOWED_SCOPES = (
     "research_data", "customer_list", "other"
 )
 APPEAL_WINDOW_SECONDS = 7 * 24 * 60 * 60             # 7 days
+MIN_STAKE_WEI = 100_000_000_000_000_000              # 0.1 GEN
+MAX_SUSPECT_URL_LEN = 2048
+HEX_CHARS = set("0123456789abcdef")
 
 # --- Reputation system (v0.2.19) ---
 # Every address starts at REPUTATION_BASELINE the first time it's touched.
@@ -319,10 +322,15 @@ class NDASentinel(gl.Contract):
         for h in hashes:
             if not isinstance(h, str) or len(h) != 64:
                 raise gl.vm.UserError("Each hash must be a 64-char hex string")
-                
+            if not all(c in HEX_CHARS for c in h):
+                raise gl.vm.UserError("Each hash must contain only hex characters")
+
+        if len(set(hashes)) != len(hashes):
+            raise gl.vm.UserError("Duplicate keyword hashes are not allowed")
+
         val = gl.message.value
-        if int(val) <= 0:
-            raise gl.vm.UserError("Stake amount must be > 0")
+        if int(val) < MIN_STAKE_WEI:
+            raise gl.vm.UserError(f"Stake must be at least {MIN_STAKE_WEI} wei (0.1 GEN)")
 
         new_id = self.next_nda_id
         
@@ -385,8 +393,8 @@ class NDASentinel(gl.Contract):
             raise gl.vm.UserError("Only party_b can activate")
             
         val = gl.message.value
-        if int(val) <= 0:
-            raise gl.vm.UserError("Activation stake must be > 0")
+        if int(val) < MIN_STAKE_WEI:
+            raise gl.vm.UserError(f"Activation stake must be at least {MIN_STAKE_WEI} wei (0.1 GEN)")
             
         nda.stake_b = val
         nda.status = "active"
@@ -453,7 +461,12 @@ class NDASentinel(gl.Contract):
                 
         if len(salt) < 16 or len(salt) > 256:
             raise gl.vm.UserError("Salt length must be 16-256 chars")
-            
+
+        if not (suspect_url.startswith("http://") or suspect_url.startswith("https://")):
+            raise gl.vm.UserError("suspect_url must be http:// or https://")
+        if len(suspect_url) > MAX_SUSPECT_URL_LEN:
+            raise gl.vm.UserError(f"suspect_url exceeds {MAX_SUSPECT_URL_LEN} chars")
+
         stored_hashes_str = self.nda_keyword_hashes_json.get(nda_id, "[]")
         stored_hashes = json.loads(stored_hashes_str)
         stored_hashes_set = set(stored_hashes)
@@ -1568,3 +1581,7 @@ Return JSON:
                 active_stakes + escrows + party_withdrawables + int(self.treasury)
             ),
         })
+
+    @gl.public.view
+    def get_nda_count(self) -> u256:
+        return self.next_nda_id

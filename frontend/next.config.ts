@@ -6,21 +6,29 @@ const nextConfig: NextConfig = {
     root: path.resolve(__dirname),
   },
   async headers() {
+    const securityHeaders = [
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "X-Frame-Options", value: "DENY" },
+      { key: "X-XSS-Protection", value: "1; mode=block" },
+      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      {
+        key: "Permissions-Policy",
+        value: "camera=(), microphone=(), geolocation=()",
+      },
+    ];
     return [
       {
-        // HTML documents must never be cached by intermediaries — new
-        // deploys should be picked up on the very next request. Hashed
-        // static chunks under /_next/static/* still get their long TTL
-        // from Vercel defaults.
         source: "/",
         headers: [
           { key: "Cache-Control", value: "public, max-age=0, must-revalidate" },
+          ...securityHeaders,
         ],
       },
       {
         source: "/:path((?!_next/static).*)",
         headers: [
           { key: "Cache-Control", value: "public, max-age=0, must-revalidate" },
+          ...securityHeaders,
         ],
       },
     ];

@@ -9,6 +9,46 @@ resubmission-review feedback item(s) it addresses.
 
 ---
 
+## [0.2.21] — 2026-08-30 — Security Hardening Bundle v1
+
+**Contract change — redeploy required.**
+
+### Contract (`contracts/nda_sentinel.py`)
+- **Minimum stake enforcement** — `MIN_STAKE_WEI = 0.1 GEN` replaces the
+  prior `> 0` check in both `create_nda` and `activate_nda`. Prevents
+  dust-stake griefing (thousands of near-zero-stake NDAs polluting indexes).
+- **`suspect_url` validation** in `report_leak` — scheme must be `http://`
+  or `https://`, length capped at 2048 chars. Aligns with existing checks
+  in `appeal` and `register_publisher_identity`.
+- **Hex-only keyword hash validation** in `create_nda` — ensures every hash
+  is valid lowercase hex, not arbitrary 64-char strings.
+- **Duplicate keyword hash rejection** in `create_nda` — prevents inflated
+  `keyword_hash_count` via repeated hashes.
+- **`get_nda_count()` view** — returns `next_nda_id` for O(1) enumeration
+  without scanning the full NDA array.
+
+### Tests (`tests/test_nda_sentinel.py`)
+- 7 new fast-bucket tests covering every new validation guard:
+  `test_create_nda_rejects_duplicate_keyword_hashes`,
+  `test_create_nda_rejects_non_hex_keyword_hash`,
+  `test_create_nda_rejects_dust_stake`,
+  `test_activate_nda_rejects_dust_stake`,
+  `test_report_leak_rejects_non_http_url`,
+  `test_report_leak_rejects_overlong_url`,
+  `test_get_nda_count_tracks_creation`.
+
+### Frontend (`frontend/next.config.ts`)
+- Security headers added: `X-Content-Type-Options`, `X-Frame-Options`,
+  `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`.
+
+### Documentation
+- `SECURITY.md` updated to v0.2.21 — new §6 "Input validation hardening"
+  documents all guards with rationale table.
+- `CONTRIBUTING.md` added — project structure, code conventions, PR process.
+- `CHANGELOG.md` — this entry.
+
+---
+
 ## [0.2.20.2] — 2026-08-27 — Explorer-ready landing polish + test bucketing
 
 Frontend-only + tests-only. Contract ABI unchanged; no redeploy required.

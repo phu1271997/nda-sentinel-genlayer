@@ -1,7 +1,7 @@
 # Security Model — NDA Sentinel
 
 This document describes the trust assumptions, threat model, and audit
-checklist for NDA Sentinel v0.2.18. Anything not covered here is
+checklist for NDA Sentinel v0.2.21. Anything not covered here is
 out-of-scope for the current audit and left as follow-up.
 
 ## 1. Trust boundary
@@ -68,8 +68,8 @@ contents as inert.
 
 | Method | Auth |
 |---|---|
-| `create_nda` | Any address; must pay `stake_a > 0`. |
-| `activate_nda` | Only `party_b`; must pay `stake_b > 0`. |
+| `create_nda` | Any address; must pay `stake_a >= 0.1 GEN`. |
+| `activate_nda` | Only `party_b`; must pay `stake_b >= 0.1 GEN`. |
 | `cancel_pending_nda` | Only `party_a`; only after 7 days since `created_at`. |
 | `report_leak` | Only `party_a` or `party_b`; NDA must be `active` and pre-expiry; report fee ≥ 1 GEN. |
 | `appeal` | Only the address the verdict identified as `violator`; NDA must be `leaked`; before `appeal_deadline`; not previously appealed. |
@@ -96,7 +96,22 @@ numeric tolerances on slashing-critical scores:
 Wording differences in `reasoning` and `evidence_quote` are explicitly
 allowed. See §3.4 of `gen-rules/00-read-me.md` for the design rationale.
 
-## 6. Known limitations / follow-ups
+## 6. Input validation hardening (v0.2.21)
+
+v0.2.21 introduced a security hardening bundle targeting input validation
+consistency across all write paths:
+
+| Guard | Method(s) | Rationale |
+|---|---|---|
+| `MIN_STAKE_WEI = 0.1 GEN` | `create_nda`, `activate_nda` | Prevents dust-stake griefing where an attacker creates thousands of near-zero-stake NDAs to pollute indexes. |
+| `suspect_url` scheme check (`http://` or `https://`) | `report_leak` | Aligns with existing checks in `appeal` and `register_publisher_identity`. Prevents `file://`, `data:`, `javascript:` scheme injection. |
+| `suspect_url` length cap (2048) | `report_leak` | Prevents oversized URL storage and potential abuse of `web.render`. |
+| Hex-only keyword hash validation | `create_nda` | Ensures hashes are valid sha256 hex, not arbitrary 64-char strings. |
+| Duplicate keyword hash rejection | `create_nda` | Prevents inflated `keyword_hash_count` via repeated hashes. |
+
+All guards have dedicated test coverage in `tests/test_nda_sentinel.py`.
+
+## 7. Known limitations / follow-ups
 
 - **No multi-party NDA** yet: two parties only (party_a, party_b).
 - **No re-appeal on second cycle**: if a reported → overturned NDA is
@@ -112,7 +127,7 @@ allowed. See §3.4 of `gen-rules/00-read-me.md` for the design rationale.
   over random deposit/appeal orderings would strengthen the conservation
   guarantee.
 
-## 7. Audit checklist (for reviewers)
+## 8. Audit checklist (for reviewers)
 
 - [ ] `git log --oneline` shows a story of progress, not one squashed commit.
 - [ ] `pytest tests/` returns green.
@@ -127,7 +142,7 @@ allowed. See §3.4 of `gen-rules/00-read-me.md` for the design rationale.
 - [ ] No bare `int` in class-level storage annotations.
 - [ ] No `float` in public method signatures.
 
-## 8. Reporting a vulnerability
+## 9. Reporting a vulnerability
 
 Please open a private security advisory on the GitHub repo rather than a
 public issue. Include a minimal reproduction and the git SHA you audited.
