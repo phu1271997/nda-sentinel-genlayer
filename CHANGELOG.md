@@ -9,6 +9,96 @@ resubmission-review feedback item(s) it addresses.
 
 ---
 
+## [0.2.28] — 2026-09-07 — Milestone 3 Rebuild: AI Watchers (Consensus-Verified External Event Subscriptions)
+
+**Contract change — redeploy required.**
+
+**This entry SUPERSEDES the v0.2.24 on-chain inbox milestone.** The
+prior version was a deterministic per-user JSON queue with opt-out
+preferences and a polling bell — Solidity could ship the same feature
+in an afternoon. This rebuild layers an AI-native primitive on top:
+users create **Watchers** that subscribe the protocol to poll a public
+URL and consensus-evaluate its content against a plain-English rule.
+On a HIT the recipient's inbox fires, the poller earns a reward from
+the watcher's pool, and any downstream integration (leak report,
+NDA-scoped alert) chains off the on-chain event.
+
+### Contract (`contracts/nda_sentinel.py`) — 7 new public methods
+
+- **`create_watcher(label, url, match_rule, notify_recipient, nda_link,
+  cooldown_secs, reward_per_hit) payable`** — Subscribe to any public
+  URL with a natural-language match rule. Reward pool is
+  `msg.value` (min 0.1 GEN). Cooldown clamped 5 min – 60 days.
+  Optional `nda_link` binds the watcher to an NDA — caller must be a
+  party to that NDA, preventing griefers from polluting others' NDA
+  streams.
+- **`top_up_watcher(id) payable`** — Anyone can refill the pool.
+  Auto-lifts `drained` back to `active` when refill covers one hit.
+- **`pause_watcher(id)` / `resume_watcher(id)`** — Creator-only.
+- **`cancel_watcher(id)`** — Creator-only. Refunds the remaining pool
+  to the creator's withdrawable balance.
+- **`poll_watcher(id)`** — Anyone-callable. Runs
+  `gl.eq_principle.prompt_comparative`: every validator independently
+  fetches the URL via `web.render`, applies the match rule, and
+  consensus-agrees on `{hit, confidence, evidence_snippet, reason}`.
+  On a consensus HIT outside the cooldown window: pool → poller
+  (reward_per_hit), inbox item to recipient with the AI's evidence
+  quote, `last_hit_at` updated, `hits_count` incremented. On a
+  NO_HIT or cooldown-suppressed HIT: poller earns a small stipend
+  (1 % of pool, capped at reward_per_hit) so honest polling is
+  cost-offset. Fetch failure defaults to `hit=false` — no leader
+  override.
+- **Cooldown gate is contract-enforced** — a validator's AI cannot
+  bypass it, and a HIT during cooldown is logged but pays only the
+  stipend.
+
+### Views (5 new)
+
+`get_watcher(id)`, `get_watcher_hits(id)` (rolling 100-entry history),
+`get_user_watchers(user)` (created + polled + poll_wins),
+`get_open_watchers()` (every active watcher), `get_watcher_count()`,
+`get_watcher_limits()`.
+
+### Events (7 new)
+
+`watcher_created`, `watcher_topped_up`, `watcher_polled`,
+`watcher_hit`, `watcher_paused`, `watcher_resumed`, `watcher_cancelled`.
+
+### Notify kinds (1 new)
+
+`watcher_hit` — wired into the v0.2.24 inbox with the AI's evidence
+snippet in the body.
+
+### New badges (2 stacked on the v0.2.23 badge system)
+
+- `watcher_operator` — Bronze/Silver/Gold at 1/5/25 watchers created.
+- `watcher_poller` — 1/10/100 successful poll HITs.
+
+Reputation bump on every consensus HIT so honest pollers accumulate
+rep alongside the payout.
+
+### Frontend (`frontend/`)
+
+- **`/watchers`** — dashboard: active-watcher table with pool, reward
+  per hit, hits/polls, last hit, plus your created + polled activity.
+- **`/watchers/new`** — creation form with URL, rule, recipient,
+  optional NDA link, cooldown presets (5 min – 7 days), reward per
+  hit, pool size.
+- **`/watchers/[id]`** — full detail: config, contract state, "Poll
+  now" action for anyone (with live cooldown countdown), creator
+  controls (top-up, pause / resume, cancel + refund), reverse-chrono
+  hit history rendering the AI's evidence quote + confidence +
+  reasoning + which poller earned each payout.
+- **Nav** — `Watchers` (Eye icon) entry added to the site header.
+
+### Migration
+
+- Independent storage from the v0.2.24 inbox — inbox / prefs / bell /
+  browser Notifications carry forward unchanged, and `watcher_hit`
+  notifications flow through the same pipeline (respects opt-outs).
+
+---
+
 ## [0.2.27] — 2026-09-07 — Milestone 2 Rebuild: AI-Adjudicated Bounty Board + Endorsement Web
 
 **Contract change — redeploy required.**
