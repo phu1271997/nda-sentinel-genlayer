@@ -9,6 +9,81 @@ resubmission-review feedback item(s) it addresses.
 
 ---
 
+## [0.2.22] — 2026-09-07 — E2E Encryption Vault + Public Key Registry
+
+**Contract change — redeploy required.**
+
+Milestone 1 of 4. Adds an end-to-end-encrypted NDA path so that the
+substantive contract text and the raw keyword list never leave the
+parties' browsers in plaintext. Before this release the on-chain
+`context_description` was arbitrary free text readable by every state
+observer; from v0.2.22 an encrypted NDA reveals only a short public
+hint on-chain and the substantive payload lives inside a dual-envelope
+AES-GCM ciphertext addressed to each party's registered public key.
+
+### Contract (`contracts/nda_sentinel.py`)
+- **Pubkey registry** — `register_encryption_key(pubkey_hex, algo)`
+  writes a per-address ECDH-P256 (130 hex chars, `04`-prefixed
+  uncompressed raw) or X25519 (64 hex chars) public key with a
+  deterministic write path (no LLM). Companion views
+  `get_encryption_key(user)` and `has_encryption_key(user)` expose
+  the entry to callers.
+- **Encrypted NDA path** — `create_encrypted_nda(counterparty_hex,
+  scope, public_hint, expiry, keyword_hashes_json, ciphertext_for_a,
+  ciphertext_for_b, envelope_meta_json)` mirrors `create_nda` but
+  requires (a) both parties to have a registered key, (b) a short
+  `public_hint` (≤100 chars) instead of the free-form
+  `context_description`, and (c) two distinct AES-GCM ciphertexts.
+  Emits both `encrypted_nda_created` and the standard `nda_created`
+  event so analytics dashboards treat encrypted NDAs uniformly.
+- **Per-NDA storage** — `nda_ciphertext_a/b`, `nda_ciphertext_meta_json`,
+  and `nda_is_encrypted` TreeMaps back the new envelope path.
+- **View** — `get_encrypted_context(nda_id)` returns both envelopes and
+  the metadata so parties can decrypt locally, and
+  `get_encryption_limits()` publishes the length + algorithm limits so
+  the frontend never has to hard-code them.
+- **New events** — `encryption_key_registered`, `encrypted_nda_created`.
+- **Deterministic validation only** — algo whitelist
+  (`ecdh-p256`, `x25519`), lowercase-hex normalization, algorithm-specific
+  length gates, ciphertext length gates (32–8000 chars), distinct-envelope
+  check so a mistaken single-recipient encrypt cannot slip through.
+
+### Frontend (`frontend/`)
+- **`lib/e2ee.ts`** — WebCrypto-only ECDH-P256 → HKDF-SHA-256 → AES-256-GCM
+  primitives. Ephemeral sender keypair per envelope so ciphertexts do not
+  link two encrypted NDAs sharing recipient keys. Also exports a
+  password-protected `sealKeystore` / `openKeystore` pair (PBKDF2-SHA256,
+  250 000 iterations, AES-GCM wrap of the PKCS8 private key).
+- **`lib/keyring.ts`** — session-scoped unlocked-keypair cache +
+  localStorage-backed sealed keystore, keyed by wallet address.
+- **`/keys` page** — generate, unlock, lock, delete, export, or import a
+  sealed keystore; publish the on-chain public key; status card shows
+  local vs. on-chain sync.
+- **NDAWizard** — new "Encrypted NDA" toggle in step 1 that becomes
+  available once both parties have registered a key and the caller's
+  keystore is unlocked. When on, the wizard collects a `public_hint`,
+  generates the dual envelope client-side, and submits via
+  `create_encrypted_nda`.
+- **NDA detail** — new `EncryptedContextPanel` renders on any encrypted
+  NDA. The party addressed by the envelope can decrypt in-browser with
+  their locally-held private key.
+- **Nav** — new "Keys" link (emerald, key-round icon) in the site header.
+
+### Docs
+- `docs/ENCRYPTION.md` — threat model, wire format, envelope layout,
+  KDF choice, rotation caveats.
+
+### Migration
+- Existing v0.2.21 NDAs continue to work through `create_nda` /
+  `get_nda`; `get_encrypted_context` returns `is_encrypted=false` for
+  every legacy NDA.
+- Wallet holders who want the encrypted path must call
+  `register_encryption_key` once. Losing the local password means
+  losing access to any envelope encrypted to that key — the contract
+  cannot recover it.
+
+---
+
 ## [0.2.21.1] — 2026-08-30 — UX Enhancement + Analytics Dashboard
 
 Frontend-only. Contract ABI unchanged; no redeploy required.

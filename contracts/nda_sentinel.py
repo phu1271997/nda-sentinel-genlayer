@@ -1,4 +1,4 @@
-# v0.2.21
+# v0.2.22
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 from genlayer import *
 from dataclasses import dataclass
@@ -62,6 +62,31 @@ ALLOWED_APPEAL_GROUNDS = (
     APPEAL_GROUND_ATTRIBUTION_ERROR,
     APPEAL_GROUND_KEYWORD_MISMATCH,
 )
+
+# --- E2E encryption vault (v0.2.22) ---
+# Every party may register a public encryption key (WebCrypto ECDH P-256
+# uncompressed hex, 130 chars, or X25519 hex, 64 chars). Once BOTH parties
+# in an NDA have a key, the frontend calls `create_encrypted_nda()` with a
+# dual-envelope ciphertext: one ECIES-lite envelope addressed to each
+# party. The NDA's `context_description` becomes a short PUBLIC HINT
+# (<= 100 chars); the substantive secret lives only inside the two
+# ciphertexts, which the owning party decrypts locally with their private
+# key. The contract never sees or persists any plaintext beyond the
+# already-existing keyword hashes.
+#
+# This closes the last plaintext leak in the pre-v0.2.22 design: the
+# `context_description` used to be raw text on-chain and readable by
+# anyone, including any adversary indexing state. With encrypted NDAs the
+# only public payload is the short hint the parties chose to publish.
+MIN_ENC_PUBKEY_LEN = 64
+MAX_ENC_PUBKEY_LEN = 200
+MIN_ENC_CIPHERTEXT_LEN = 32
+MAX_ENC_CIPHERTEXT_LEN = 8000
+MAX_ENC_PUBLIC_HINT_LEN = 100
+ALLOWED_ENC_ALGOS = ("ecdh-p256", "x25519")
+
+EVENT_ENCRYPTION_KEY_REGISTERED = "encryption_key_registered"
+EVENT_ENCRYPTED_NDA_CREATED = "encrypted_nda_created"
 
 EVENT_PUBLISHER_REGISTERED = "publisher_registered"
 
@@ -193,6 +218,18 @@ class NDASentinel(gl.Contract):
     publisher_handle: TreeMap[str, str]
     publisher_verified_at: TreeMap[str, u256]
     publisher_proof_url: TreeMap[str, str]
+
+    # E2E encryption vault (v0.2.22). Per-address pubkey registry + a
+    # dual-envelope ciphertext per encrypted NDA. Keyed by `_addr_key` so
+    # the two access paths (Address / raw bytes / hex) always hit the
+    # same slot.
+    encryption_pubkey: TreeMap[str, str]
+    encryption_pubkey_algo: TreeMap[str, str]
+    encryption_pubkey_registered_at: TreeMap[str, u256]
+    nda_ciphertext_a: TreeMap[u256, str]
+    nda_ciphertext_b: TreeMap[u256, str]
+    nda_ciphertext_meta_json: TreeMap[u256, str]
+    nda_is_encrypted: TreeMap[u256, bool]
 
     def __init__(self):
         self.owner = gl.message.sender_address
@@ -1580,6 +1617,241 @@ Return JSON:
             "total_liabilities": str(
                 active_stakes + escrows + party_withdrawables + int(self.treasury)
             ),
+        })
+
+    # ------------------------------------------------------------------
+    # v0.2.22 — E2E encryption vault
+    # ------------------------------------------------------------------
+
+    @gl.public.write
+    def register_encryption_key(self, pubkey_hex: str, algo: str) -> None:
+        """Register a public encryption key for the caller.
+
+        Deterministic (no LLM path). The caller supplies a public key
+        exported from their in-browser WebCrypto keypair (ECDH P-256
+        uncompressed raw = 130 hex chars, or X25519 raw = 64 hex chars)
+        plus the algorithm label so envelope decode can pick the right
+        curve. The private half NEVER touches the contract."""
+        sender = gl.message.sender_address
+        algo_norm = algo.strip().lower()
+        if algo_norm not in ALLOWED_ENC_ALGOS:
+            raise gl.vm.UserError(f"algo must be one of {ALLOWED_ENC_ALGOS}")
+        pubkey_norm = pubkey_hex.strip().lower()
+        if pubkey_norm.startswith("0x"):
+            pubkey_norm = pubkey_norm[2:]
+        if len(pubkey_norm) < MIN_ENC_PUBKEY_LEN or len(pubkey_norm) > MAX_ENC_PUBKEY_LEN:
+            raise gl.vm.UserError(
+                f"pubkey length must be {MIN_ENC_PUBKEY_LEN}-{MAX_ENC_PUBKEY_LEN}"
+            )
+        if not all(c in HEX_CHARS for c in pubkey_norm):
+            raise gl.vm.UserError("pubkey must be hex")
+        # ECDH-P256 raw uncompressed = 65 bytes = 130 chars, starts with '04'.
+        if algo_norm == "ecdh-p256":
+            if len(pubkey_norm) != 130:
+                raise gl.vm.UserError(
+                    "ecdh-p256 pubkey must be exactly 130 hex chars (65 bytes raw)"
+                )
+            if not pubkey_norm.startswith("04"):
+                raise gl.vm.UserError(
+                    "ecdh-p256 pubkey must be uncompressed raw form (leading 04)"
+                )
+        elif algo_norm == "x25519":
+            if len(pubkey_norm) != 64:
+                raise gl.vm.UserError(
+                    "x25519 pubkey must be exactly 64 hex chars (32 bytes raw)"
+                )
+        key = self._addr_key(sender)
+        self.encryption_pubkey[key] = pubkey_norm
+        self.encryption_pubkey_algo[key] = algo_norm
+        self.encryption_pubkey_registered_at[key] = self._now()
+        self._emit(EVENT_ENCRYPTION_KEY_REGISTERED, u256(0), sender, {
+            "algo": algo_norm,
+            "pubkey_len": len(pubkey_norm),
+        })
+
+    @gl.public.view
+    def get_encryption_key(self, user: Address) -> str:
+        key = self._addr_key(user)
+        return json.dumps({
+            "pubkey": self.encryption_pubkey.get(key, ""),
+            "algo": self.encryption_pubkey_algo.get(key, ""),
+            "registered_at": str(self.encryption_pubkey_registered_at.get(key, u256(0))),
+        })
+
+    @gl.public.view
+    def has_encryption_key(self, user: Address) -> bool:
+        key = self._addr_key(user)
+        return len(self.encryption_pubkey.get(key, "")) > 0
+
+    @gl.public.write.payable
+    def create_encrypted_nda(
+        self,
+        counterparty_hex: str,
+        scope: str,
+        public_hint: str,
+        expiry_timestamp: u256,
+        keyword_hashes_json: str,
+        ciphertext_for_a: str,
+        ciphertext_for_b: str,
+        envelope_meta_json: str,
+    ) -> u256:
+        """E2E-encrypted NDA. Requires BOTH parties to have called
+        `register_encryption_key` first. The caller uploads a
+        dual-envelope ciphertext — one envelope per party — assembled
+        client-side against each party's registered pubkey. The contract
+        stores the ciphertexts as opaque strings and never sees the
+        plaintext keyword list or the private NDA context.
+
+        `public_hint` is a SHORT (<=100 char) public label meant to help
+        the AI Jury pick a rough scope; the substantive secret is inside
+        the envelopes only."""
+        sender = gl.message.sender_address
+        counterparty = Address(counterparty_hex)
+        sender_key = self._addr_key(sender)
+        cp_key = self._addr_key(counterparty)
+
+        if counterparty == sender:
+            raise gl.vm.UserError("Counterparty cannot be sender")
+        if scope not in ALLOWED_SCOPES:
+            raise gl.vm.UserError(f"Scope must be one of {ALLOWED_SCOPES}")
+        if len(public_hint) < 1 or len(public_hint) > MAX_ENC_PUBLIC_HINT_LEN:
+            raise gl.vm.UserError(
+                f"public_hint length must be 1-{MAX_ENC_PUBLIC_HINT_LEN} chars"
+            )
+
+        current_time = self._now()
+        if int(expiry_timestamp) <= int(current_time):
+            raise gl.vm.UserError("Expiry must be in the future")
+
+        if len(self.encryption_pubkey.get(sender_key, "")) == 0:
+            raise gl.vm.UserError(
+                "Sender must call register_encryption_key first"
+            )
+        if len(self.encryption_pubkey.get(cp_key, "")) == 0:
+            raise gl.vm.UserError(
+                "Counterparty must call register_encryption_key first"
+            )
+
+        if len(ciphertext_for_a) < MIN_ENC_CIPHERTEXT_LEN or len(ciphertext_for_a) > MAX_ENC_CIPHERTEXT_LEN:
+            raise gl.vm.UserError(
+                f"ciphertext_for_a length must be {MIN_ENC_CIPHERTEXT_LEN}-{MAX_ENC_CIPHERTEXT_LEN}"
+            )
+        if len(ciphertext_for_b) < MIN_ENC_CIPHERTEXT_LEN or len(ciphertext_for_b) > MAX_ENC_CIPHERTEXT_LEN:
+            raise gl.vm.UserError(
+                f"ciphertext_for_b length must be {MIN_ENC_CIPHERTEXT_LEN}-{MAX_ENC_CIPHERTEXT_LEN}"
+            )
+        if ciphertext_for_a == ciphertext_for_b:
+            raise gl.vm.UserError(
+                "ciphertext_for_a and ciphertext_for_b must differ (dual envelope)"
+            )
+        if len(envelope_meta_json) > 2000:
+            raise gl.vm.UserError("envelope_meta_json must be <= 2000 chars")
+
+        hashes = json.loads(keyword_hashes_json)
+        if not isinstance(hashes, list) or len(hashes) == 0 or len(hashes) > MAX_KEYWORDS_PER_NDA:
+            raise gl.vm.UserError(
+                f"Must provide 1 to {MAX_KEYWORDS_PER_NDA} keyword hashes"
+            )
+        for h in hashes:
+            if not isinstance(h, str) or len(h) != 64:
+                raise gl.vm.UserError("Each hash must be a 64-char hex string")
+            if not all(c in HEX_CHARS for c in h):
+                raise gl.vm.UserError("Each hash must contain only hex characters")
+        if len(set(hashes)) != len(hashes):
+            raise gl.vm.UserError("Duplicate keyword hashes are not allowed")
+
+        val = gl.message.value
+        if int(val) < MIN_STAKE_WEI:
+            raise gl.vm.UserError(
+                f"Stake must be at least {MIN_STAKE_WEI} wei (0.1 GEN)"
+            )
+
+        new_id = self.next_nda_id
+        a = NDA(
+            id=new_id,
+            party_a=sender,
+            party_b=counterparty,
+            creator=sender,
+            scope=scope,
+            context_description=public_hint,
+            expiry_timestamp=expiry_timestamp,
+            stake_a=val,
+            stake_b=u256(0),
+            status="pending",
+            created_at=current_time,
+            activated_at=u256(0),
+            keyword_hash_count=u256(len(hashes)),
+            suspect_url="",
+            verdict_json="",
+            violator=Address("0x0000000000000000000000000000000000000000"),
+            slashed_amount=u256(0),
+            reporter=Address("0x0000000000000000000000000000000000000000"),
+            appeal_deadline=u256(0),
+        )
+        self.ndas.append(a)
+        self.nda_index_by_id[new_id] = u256(len(self.ndas) - 1)
+        self.nda_keyword_hashes_json[new_id] = json.dumps(hashes)
+
+        self.nda_ciphertext_a[new_id] = ciphertext_for_a
+        self.nda_ciphertext_b[new_id] = ciphertext_for_b
+        self.nda_ciphertext_meta_json[new_id] = envelope_meta_json
+        self.nda_is_encrypted[new_id] = True
+
+        for user in [sender, counterparty]:
+            existing_str = self.user_nda_ids_json.get(user, "[]")
+            existing = json.loads(existing_str)
+            existing.append(int(new_id))
+            self.user_nda_ids_json[user] = json.dumps(existing)
+
+        self.next_nda_id = u256(int(new_id) + 1)
+        self.total_ndas_created = u256(int(self.total_ndas_created) + 1)
+
+        self._emit(EVENT_ENCRYPTED_NDA_CREATED, new_id, sender, {
+            "counterparty": self._addr_key(counterparty),
+            "scope": scope,
+            "stake": str(val),
+            "expiry": str(expiry_timestamp),
+            "cipher_len_a": len(ciphertext_for_a),
+            "cipher_len_b": len(ciphertext_for_b),
+        })
+        # Also emit the standard nda_created event so downstream indexers
+        # (analytics, event timeline) treat encrypted NDAs uniformly.
+        self._emit(EVENT_NDA_CREATED, new_id, sender, {
+            "counterparty": self._addr_key(counterparty),
+            "scope": scope,
+            "stake": str(val),
+            "expiry": str(expiry_timestamp),
+            "encrypted": True,
+        })
+        return new_id
+
+    @gl.public.view
+    def get_encrypted_context(self, nda_id: u256) -> str:
+        """Return both dual-envelope ciphertexts + metadata for an NDA.
+
+        The caller decrypts only the envelope addressed to them
+        (`ciphertext_a` when they are party_a, `ciphertext_b` when they
+        are party_b) using their locally-held private key. Non-parties
+        cannot decrypt either envelope."""
+        idx = int(self.nda_index_by_id.get(nda_id, u256(999999999)))
+        if idx >= len(self.ndas) or self.ndas[idx].id != nda_id:
+            raise gl.vm.UserError("NDA not found")
+        return json.dumps({
+            "is_encrypted": self.nda_is_encrypted.get(nda_id, False),
+            "ciphertext_a": self.nda_ciphertext_a.get(nda_id, ""),
+            "ciphertext_b": self.nda_ciphertext_b.get(nda_id, ""),
+            "envelope_meta_json": self.nda_ciphertext_meta_json.get(nda_id, "{}"),
+        })
+
+    @gl.public.view
+    def get_encryption_limits(self) -> str:
+        return json.dumps({
+            "min_pubkey_len": str(MIN_ENC_PUBKEY_LEN),
+            "max_pubkey_len": str(MAX_ENC_PUBKEY_LEN),
+            "min_ciphertext_len": str(MIN_ENC_CIPHERTEXT_LEN),
+            "max_ciphertext_len": str(MAX_ENC_CIPHERTEXT_LEN),
+            "max_public_hint_len": str(MAX_ENC_PUBLIC_HINT_LEN),
+            "algos": list(ALLOWED_ENC_ALGOS),
         })
 
     @gl.public.view

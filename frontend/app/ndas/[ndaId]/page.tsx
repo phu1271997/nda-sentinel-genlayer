@@ -15,6 +15,7 @@ import {
   WalletNotReadyError,
 } from "@/lib/genlayer"
 import { ConnectWalletButton } from "@/components/ConnectWalletButton"
+import { EncryptedContextPanel } from "@/components/EncryptedContextPanel"
 import { EventTimeline } from "@/components/EventTimeline"
 import { LeakHistoryPanel } from "@/components/LeakHistoryPanel"
 import { ReputationBadge } from "@/components/ReputationBadge"
@@ -455,6 +456,12 @@ export default function NDADetailPage() {
           </div>
         </CardContent>
       </Card>
+
+      <EncryptedContextPanel
+        ndaId={nda.id}
+        partyA={nda.party_a}
+        partyB={nda.party_b}
+      />
 
       {nda.status === "leaked" && parsedVerdict && (
         <VerdictPanel verdict={parsedVerdict} />

@@ -1,11 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import * as z from "zod"
 import {
+  activeAddress,
   assertWritable,
   client,
   CONTRACT_ADDRESS,
@@ -16,6 +18,8 @@ import {
 import { parseGenAmount } from "@/lib/amount"
 import { generateSalt, hashKeyword } from "@/lib/crypto"
 import { downloadVaultFile } from "@/lib/vault"
+import { encryptToRecipient } from "@/lib/e2ee"
+import { getUnlockedKeypair } from "@/lib/keyring"
 import { parseContractError } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -23,7 +27,29 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { ShieldAlert, Download, Check } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { ShieldAlert, Download, Check, Lock, CheckCircle2, XCircle } from "lucide-react"
+
+interface RegistryEntry {
+  pubkey: string
+  algo: string
+  registered_at: string
+}
+
+async function fetchEncryptionKey(user: string): Promise<RegistryEntry | null> {
+  try {
+    const res = (await client.readContract({
+      address: CONTRACT_ADDRESS,
+      functionName: "get_encryption_key",
+      args: [user],
+    })) as string
+    const parsed = JSON.parse(res) as RegistryEntry
+    if (!parsed.pubkey) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
 
 const ALLOWED_SCOPES = [
   "ma_pricing", "product_roadmap", "source_code", "personal_info",
@@ -44,7 +70,9 @@ function tomorrowIsoDate(): string {
 const formSchema = z.object({
   counterpartyHex: z.string().regex(/^0x[a-fA-F0-9]{40}$/, "Invalid Ethereum address"),
   scope: z.string().min(1, "Required"),
-  contextDescription: z.string().min(10).max(500),
+  encrypted: z.boolean(),
+  contextDescription: z.string().min(1).max(500),
+  publicHint: z.string().max(100),
   expiryDate: z
     .string()
     .min(1, "Required")
@@ -52,9 +80,6 @@ const formSchema = z.object({
       (v) => {
         const ms = Date.parse(v)
         if (!Number.isFinite(ms)) return false
-        // Require the expiry to be strictly in the future. Give a small
-        // safety cushion (60 s) so a form filled out right at midnight
-        // does not get rejected by the time the tx is mined.
         return ms > Date.now() + 60_000
       },
       { message: "Expiry must be a future date" },
@@ -71,6 +96,9 @@ export function NDAWizard() {
   const [downloaded, setDownloaded] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [lastTxHash, setLastTxHash] = useState<string | null>(null)
+  const [senderKey, setSenderKey] = useState<RegistryEntry | null>(null)
+  const [counterpartyKey, setCounterpartyKey] = useState<RegistryEntry | null>(null)
+  const [ownKeystoreUnlocked, setOwnKeystoreUnlocked] = useState(false)
   const router = useRouter()
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -78,13 +106,43 @@ export function NDAWizard() {
     defaultValues: {
       counterpartyHex: "",
       scope: "",
+      encrypted: false,
       contextDescription: "",
+      publicHint: "",
       expiryDate: "",
       keywordsText: "",
       vaultPassword: "",
       stakeAmount: "100",
     },
   })
+
+  const encryptedMode = form.watch("encrypted")
+  const counterpartyHex = form.watch("counterpartyHex")
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      if (activeAddress) {
+        const me = await fetchEncryptionKey(activeAddress)
+        if (!cancelled) {
+          setSenderKey(me)
+          setOwnKeystoreUnlocked(!!getUnlockedKeypair(activeAddress))
+        }
+      }
+      if (counterpartyHex && /^0x[a-fA-F0-9]{40}$/.test(counterpartyHex)) {
+        const cp = await fetchEncryptionKey(counterpartyHex)
+        if (!cancelled) setCounterpartyKey(cp)
+      } else if (!cancelled) {
+        setCounterpartyKey(null)
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [counterpartyHex])
+
+  const encryptedReady = !!senderKey && !!counterpartyKey && ownKeystoreUnlocked
 
   const handleGenerateSalt = () => {
     setSalt(generateSalt())
@@ -112,36 +170,82 @@ export function NDAWizard() {
       alert("You must download your Secret Vault first!")
       return
     }
-    
+
+    if (values.encrypted) {
+      if (!senderKey || !counterpartyKey) {
+        alert("Encrypted mode requires both parties to have registered a public key.")
+        return
+      }
+      if (!values.publicHint || values.publicHint.length < 1) {
+        alert("Encrypted mode needs a short public hint (≤ 100 chars).")
+        return
+      }
+    }
+
     setIsSubmitting(true)
     try {
       await assertWritable()
 
-      const hashes = keywordsList.map(kw => hashKeyword(kw, salt))
+      const hashes = keywordsList.map((kw) => hashKeyword(kw, salt))
       const hashesJson = JSON.stringify(hashes)
 
       const expiryTimestamp = BigInt(
-        Math.floor(new Date(values.expiryDate).getTime() / 1000)
+        Math.floor(new Date(values.expiryDate).getTime() / 1000),
       )
       const weiAmount = parseGenAmount(values.stakeAmount)
 
       await ensureCorrectChainBeforeWrite()
-      const hash = await client.writeContract({
-        address: CONTRACT_ADDRESS,
-        functionName: "create_nda",
-        args: [
-          values.counterpartyHex,
-          values.scope,
-          values.contextDescription,
-          expiryTimestamp,
-          hashesJson,
-        ],
-        value: weiAmount,
-      })
+      const doWrite = async () => {
+        if (values.encrypted && senderKey && counterpartyKey) {
+          const payload = JSON.stringify({
+            v: 1,
+            created_at: Date.now(),
+            nda_context: values.contextDescription,
+            keywords: keywordsList,
+            salt,
+          })
+          const [ciphertext_for_a, ciphertext_for_b] = await Promise.all([
+            encryptToRecipient(senderKey.pubkey, payload),
+            encryptToRecipient(counterpartyKey.pubkey, payload),
+          ])
+          const envelopeMeta = JSON.stringify({
+            algo: "ecdh-p256+hkdf-sha256+aes-256-gcm",
+            v: 1,
+            sender_pubkey_fingerprint: senderKey.pubkey.slice(0, 16),
+            recipient_pubkey_fingerprint: counterpartyKey.pubkey.slice(0, 16),
+          })
+          return client.writeContract({
+            address: CONTRACT_ADDRESS,
+            functionName: "create_encrypted_nda",
+            args: [
+              values.counterpartyHex,
+              values.scope,
+              values.publicHint,
+              expiryTimestamp,
+              hashesJson,
+              ciphertext_for_a,
+              ciphertext_for_b,
+              envelopeMeta,
+            ],
+            value: weiAmount,
+          })
+        }
+        return client.writeContract({
+          address: CONTRACT_ADDRESS,
+          functionName: "create_nda",
+          args: [
+            values.counterpartyHex,
+            values.scope,
+            values.contextDescription,
+            expiryTimestamp,
+            hashesJson,
+          ],
+          value: weiAmount,
+        })
+      }
+      const hash = await doWrite()
       setLastTxHash(hash)
 
-      // ACCEPTED = leader executed + validators agreed. FINALIZED needs
-      // the full appeal window (~5+ min) to close — not a good UI block.
       await client.waitForTransactionReceipt({
         hash,
         status: "ACCEPTED" as never,
@@ -150,7 +254,6 @@ export function NDAWizard() {
       })
 
       router.push("/ndas")
-
     } catch (err) {
       console.error(err)
       if (err instanceof WalletNotReadyError) {
@@ -216,16 +319,107 @@ export function NDAWizard() {
                   )}
                 />
                 
+                <div className="rounded-md border p-4 space-y-3 bg-emerald-50/40 dark:bg-emerald-950/20">
+                  <div className="flex items-start gap-3">
+                    <Lock className="w-5 h-5 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="encrypted"
+                          checked={encryptedMode}
+                          disabled={!encryptedReady}
+                          onChange={(e) =>
+                            form.setValue("encrypted", e.target.checked, { shouldValidate: true })
+                          }
+                        />
+                        <label htmlFor="encrypted" className="text-sm font-semibold">
+                          Encrypted NDA (v0.2.22)
+                        </label>
+                        {encryptedMode ? (
+                          <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+                            <Lock className="w-3 h-3 mr-1" /> On
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                        Only a short public hint is stored on-chain; the full
+                        context + keyword list are AES-GCM-encrypted for each
+                        party&apos;s registered public key. Requires both
+                        parties to have a key registered at{" "}
+                        <Link href="/keys" className="underline text-emerald-700 dark:text-emerald-300">
+                          /keys
+                        </Link>
+                        .
+                      </p>
+                      <ul className="text-xs mt-2 space-y-1">
+                        <li className="flex items-center gap-2">
+                          {senderKey ? (
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          ) : (
+                            <XCircle className="w-3 h-3 text-rose-500" />
+                          )}
+                          <span>Your encryption key on-chain</span>
+                        </li>
+                        <li className="flex items-center gap-2">
+                          {counterpartyKey ? (
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          ) : (
+                            <XCircle className="w-3 h-3 text-rose-500" />
+                          )}
+                          <span>Counterparty encryption key on-chain</span>
+                        </li>
+                        <li className="flex items-center gap-2">
+                          {ownKeystoreUnlocked ? (
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          ) : (
+                            <XCircle className="w-3 h-3 text-rose-500" />
+                          )}
+                          <span>Your local keystore unlocked (needed to decrypt later)</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                {encryptedMode ? (
+                  <FormField
+                    control={form.control}
+                    name="publicHint"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Public Hint (short, ≤ 100 chars)</FormLabel>
+                        <FormControl>
+                          <Input placeholder="e.g. Term-sheet Q4 with Sequoia" {...field} />
+                        </FormControl>
+                        <FormDescription>
+                          The only human-readable label visible on-chain when
+                          Encrypted mode is on.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ) : null}
+
                 <FormField
                   control={form.control}
                   name="contextDescription"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Public Context</FormLabel>
+                      <FormLabel>
+                        {encryptedMode
+                          ? "Private Context (encrypted client-side)"
+                          : "Public Context"}
+                      </FormLabel>
                       <FormControl>
                         <Textarea placeholder="e.g. Series B negotiations between Acme & Sequoia" {...field} />
                       </FormControl>
-                      <FormDescription>This will be public on-chain to provide context to the AI Jury.</FormDescription>
+                      <FormDescription>
+                        {encryptedMode
+                          ? "AES-GCM-encrypted with the recipient's public key before it leaves this browser."
+                          : "This will be public on-chain to provide context to the AI Jury."}
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -248,7 +442,18 @@ export function NDAWizard() {
                   )}
                 />
 
-                <Button type="button" onClick={() => form.trigger(["counterpartyHex", "scope", "contextDescription", "expiryDate"]).then(v => v && setStep(2))}>
+                <Button
+                  type="button"
+                  onClick={() =>
+                    form
+                      .trigger(
+                        encryptedMode
+                          ? ["counterpartyHex", "scope", "publicHint", "contextDescription", "expiryDate"]
+                          : ["counterpartyHex", "scope", "contextDescription", "expiryDate"],
+                      )
+                      .then((v) => v && setStep(2))
+                  }
+                >
                   Next: Keywords
                 </Button>
               </div>
