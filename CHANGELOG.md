@@ -9,6 +9,120 @@ resubmission-review feedback item(s) it addresses.
 
 ---
 
+## [0.2.26] — 2026-09-07 — Milestone 1 Rebuild: Verified E2EE + AI-Attested Keys + Social Recovery
+
+**Contract change — redeploy required.**
+
+**This entry SUPERSEDES the previously-rejected v0.2.22 encryption
+milestone.** Staff rejected v0.2.22 as too simple: the register path
+was deterministic self-declaration (any address could bind any
+pubkey — no attestation), which duplicated existing publisher_identity
+plumbing without adding GenLayer-native value. v0.2.26 rebuilds the
+milestone around the AI Jury and `gl.eq_principle.prompt_comparative`,
+so every key-lifecycle transition is validator-consensus attested,
+adds K-of-N guardian-based social recovery where each guardian
+approval is ALSO AI-attested, per-NDA session-key rotation on live
+encrypted vaults, and a per-user append-only key-transparency log.
+
+### Contract (`contracts/nda_sentinel.py`) — 8 new public methods
+
+- **`register_encryption_key_with_proof(pubkey, algo, proof_url, challenge)`**
+  — AI-Jury-attested registration. Validators independently fetch
+  `proof_url` via `gl.nondet.web.render` inside an `eq_principle`
+  closure and must reach consensus on a FOUR-fact check: pubkey seen,
+  address seen, challenge seen, kind seen (kind pins the operation so
+  a page authored for REGISTER cannot be replayed as ROTATE). Fetch
+  failure defaults to `verified=false` — no leader-only overrides.
+- **`rotate_encryption_key(new_pubkey, new_algo, proof_url, challenge)`**
+  — AI-attested rotation. Requires a currently VERIFIED key, then runs
+  a fresh attestation on the new pubkey with kind `ROTATE`. Rotation
+  counter increments; transparency log records prior + new pubkey
+  fingerprints.
+- **`revoke_encryption_key(reason_url, challenge)`** — AI-attested
+  revocation. Blocks new encryptions to the key; existing envelopes
+  stay locally decryptable. Kind `REVOKE`.
+- **`set_recovery_guardians(guardians_json, threshold)`** — 2-of-N to
+  7-of-N guardians. Deterministic write (the AI-attested step happens
+  later per guardian approval).
+- **`initiate_key_recovery(new_pubkey, new_algo)`** — user announces
+  a replacement pubkey; guardians are inboxed to approve.
+- **`guardian_approve_recovery(user_hex, approval_url, challenge)`**
+  — a listed guardian AI-attests the target user's replacement pubkey
+  by hosting an approval page containing user_addr + new_pubkey +
+  challenge + literal `GUARDIAN_APPROVE`. Once threshold approvals
+  accumulate the recovery finalizes atomically and the new pubkey
+  replaces the old one.
+- **`rotate_nda_session_key(nda_id, new_ct_a, new_ct_b, new_meta)`**
+  — per-NDA session-key rotation on a live encrypted vault. Either
+  party can call; old envelope pushed onto `nda_session_history_json`
+  (last 5 rotations). Blocked if either party's key is REVOKED.
+- **Six new views** — `get_encryption_key_status`,
+  `get_encryption_key_card` (single-call profile with rotation counter
+  + proof URL + last history entry), `get_key_history` (append-only
+  100-entry audit log), `get_recovery_status`,
+  `get_nda_session_history`, `get_verified_encryption_limits`.
+
+### Contract gate change
+
+- **`create_encrypted_nda`** now REQUIRES both parties'
+  `get_encryption_key_status == "verified"`. UNVERIFIED
+  self-declared pubkeys from the legacy path are rejected at contract
+  level so the encrypted-NDA path always rests on an AI-attested
+  foundation.
+
+### Contract events (new)
+
+`key_attestation_verified`, `key_rotation_finalized`, `key_revoked`,
+`key_recovery_initiated`, `guardian_approved`, `key_recovery_finalized`,
+`guardians_updated`, `nda_session_key_rotated`.
+
+### Contract notify kinds (new — wired into v0.2.24 inbox)
+
+`key_attestation_verified`, `key_rotation_finalized`, `key_revoked`,
+`key_recovery_initiated`, `guardian_approved`,
+`key_recovery_finalized`, `nda_session_key_rotated`.
+
+### Frontend (`frontend/`)
+
+- **`/keys` page** rewritten around the two-step attestation flow:
+  step 1 = local keypair (generate + seal + unlock), step 2 = on-chain
+  attestation with a copy-ready proof template that already includes
+  the pubkey, address, challenge phrase and kind marker. Status card
+  shows on-chain state (unverified / verified / rotating / revoked),
+  rotation counter, and links to the current proof URL. Rotate + revoke
+  buttons wired to the AI-attested contract methods.
+- **`/keys/recovery` page (new)** — configure 2-of-N to 7-of-N
+  guardians, announce a recovery (with in-browser fallback keypair
+  generation + PKCS8 download), approve as a guardian (with a
+  copy-ready guardian-approval proof template).
+- **`/keys/history` page (new)** — reverse-chronological transparency
+  log rendered from `get_key_history`.
+- **`EncryptedContextPanel`** gains a "Rotate session key" action:
+  decrypts locally, re-encrypts for both parties' current pubkeys,
+  posts the fresh dual envelope via `rotate_nda_session_key`.
+- **`NDAWizard`** now checks `get_encryption_key_status == "verified"`
+  (via the new `RegistryEntry.status`) rather than mere existence —
+  the "Encrypted mode" toggle is disabled until both parties are
+  AI-attested.
+
+### Docs
+
+- `docs/ENCRYPTION.md` rewritten with the v0.2.26 lifecycle table,
+  four-fact attestation prompt, guardian approval flow, session-key
+  rotation semantics, and transparency-log design.
+
+### Migration
+
+- Legacy self-declared keys (pre-v0.2.26) are automatically marked
+  `unverified` on the next contract deploy — they cannot back new
+  encrypted NDAs until the owner re-registers via
+  `register_encryption_key_with_proof`.
+- Encrypted NDAs already on-chain from a pre-v0.2.26 deploy will not
+  exist against the new contract address (studionet resets between
+  deploys), so no data migration path is required.
+
+---
+
 ## [0.2.25] — 2026-09-07 — Multi-Party (Group) NDA + Threshold Consensus
 
 **Contract change — redeploy required.**

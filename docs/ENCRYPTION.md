@@ -1,4 +1,104 @@
-# E2E Encryption Vault — NDA Sentinel v0.2.22
+# E2E Encryption Vault — NDA Sentinel v0.2.26
+
+> **v0.2.26 Milestone 1 rebuild.** Staff rejected the v0.2.22
+> deterministic-key registry as too simple — it let anyone self-declare
+> any pubkey. v0.2.26 moves every key-lifecycle transition behind an
+> AI-Jury `eq_principle` attestation (validators fetch a proof URL the
+> user hosts and reach consensus on a four-fact check), adds K-of-N
+> guardian-based social recovery where each guardian approval is ALSO
+> AI-attested, session-key rotation on live encrypted NDAs, revocation,
+> and a per-user append-only key transparency log. Encrypted NDAs now
+> refuse to be created unless both parties hold a VERIFIED (attested)
+> key.
+
+## Verified key lifecycle (v0.2.26)
+
+Every state change on an encryption key goes through the AI Jury via
+`gl.eq_principle.prompt_comparative`, exactly as the publisher-identity
+flow does today. Validators independently fetch the user-hosted proof
+URL via `gl.nondet.web.render` and must reach consensus on FOUR facts:
+
+1. `PUBKEY SEEN` — the fetched page contains the claimed pubkey.
+2. `ADDRESS SEEN` — the fetched page contains the caller's lowercase
+   0x-prefixed address exactly.
+3. `CHALLENGE SEEN` — the fetched page contains the challenge phrase
+   verbatim.
+4. `KIND SEEN` — the fetched page mentions the attestation kind
+   (`REGISTER` / `ROTATE` / `REVOKE` / `GUARDIAN_APPROVE`) so a page
+   authored for one operation cannot be replayed against another.
+
+Consensus is enforced by an explicit principle that says every
+validator must independently fetch the proof URL — if a validator's
+fetch fails, they MUST default to `verified=false` rather than
+accepting the leader's true.
+
+## Contract methods
+
+| Method | Path | AI-attested? |
+|---|---|---|
+| `register_encryption_key(pubkey, algo)` | legacy self-declared | ❌ marked UNVERIFIED, cannot back encrypted NDAs |
+| `register_encryption_key_with_proof(pubkey, algo, proof_url, challenge)` | primary | ✅ eq_principle |
+| `rotate_encryption_key(new_pubkey, new_algo, proof_url, challenge)` | rotation | ✅ eq_principle |
+| `revoke_encryption_key(reason_url, challenge)` | revocation | ✅ eq_principle |
+| `set_recovery_guardians(guardians_json, threshold)` | guardian config | deterministic |
+| `initiate_key_recovery(new_pubkey, new_algo)` | announce recovery | deterministic (caller still owns the address) |
+| `guardian_approve_recovery(user_hex, approval_url, challenge)` | guardian co-sign | ✅ eq_principle per guardian |
+| `rotate_nda_session_key(nda_id, new_ct_a, new_ct_b, new_meta)` | per-NDA session-key rotation | deterministic (both parties are known) |
+
+### Views
+
+| View | Returns |
+|---|---|
+| `get_encryption_key_status(user)` | one of `unverified` / `verified` / `rotating` / `revoked` |
+| `get_encryption_key_card(user)` | single-call profile (pubkey, algo, status, rotation counter, proof URL, challenge, last history entry) |
+| `get_key_history(user)` | append-only audit log (bounded to 100 entries per user) |
+| `get_recovery_status(user)` | guardians, threshold, pending pubkey, approvals dict + count |
+| `get_nda_session_history(nda_id)` | last 5 rotations for a given encrypted NDA |
+| `get_verified_encryption_limits()` | guardian/threshold/status bounds |
+
+### Encrypted-NDA gate
+
+`create_encrypted_nda(...)` now requires BOTH parties'
+`get_encryption_key_status` to be `verified`. A self-declared UNVERIFIED
+key will be rejected at contract level — the encrypted-NDA path stands
+on the AI-attested foundation, not on a trust-me-bro pubkey drop.
+
+### Social recovery flow
+
+1. User calls `set_recovery_guardians([g1, g2, g3], threshold=2)`.
+2. User (later, having lost their local private key) calls
+   `initiate_key_recovery(new_pubkey, algo)` — announces the pubkey they
+   want their guardians to attest to. Guardians are notified via the
+   v0.2.24 inbox.
+3. Each guardian publishes an approval page at a URL they control
+   containing (a) the user's address, (b) the new pubkey, (c) the
+   challenge phrase, (d) the literal `GUARDIAN_APPROVE`, then calls
+   `guardian_approve_recovery(user_hex, approval_url, challenge)`.
+   Validators AI-verify the approval page independently.
+4. Once `threshold` approvals accumulate, `_finalize_recovery_internal`
+   fires atomically: the pending pubkey replaces the user's old one,
+   rotation counter increments, key status flips back to `verified`,
+   and the transparency log records the transition.
+
+### Session-key rotation on live NDAs
+
+Any party to an encrypted NDA can call `rotate_nda_session_key` to push
+a fresh dual envelope. Old envelope is archived into
+`nda_session_history_json` (bounded to last 5 rotations) so previous
+readers keep working. Rotation is blocked if either party's key is
+`revoked` — the caller must run the recovery flow first.
+
+### Key transparency log
+
+Every write to a user's key state (self-declared, registered, rotated,
+revoked, guardians set, recovery initiated, guardian approved, recovery
+finalized) appends an entry to
+`encryption_key_history_json[user]` bounded at 100 entries per user.
+The `/keys/history` frontend page renders this as a
+Certificate-Transparency-style audit trail — anyone about to encrypt
+for a party can audit the pubkey history first.
+
+
 
 ## Threat model
 

@@ -34,17 +34,27 @@ interface RegistryEntry {
   pubkey: string
   algo: string
   registered_at: string
+  status?: string
 }
 
 async function fetchEncryptionKey(user: string): Promise<RegistryEntry | null> {
   try {
-    const res = (await client.readContract({
-      address: CONTRACT_ADDRESS,
-      functionName: "get_encryption_key",
-      args: [user],
-    })) as string
-    const parsed = JSON.parse(res) as RegistryEntry
+    // v0.2.26 — pull the enriched key card so we get on-chain status too.
+    const [regRaw, statusRaw] = await Promise.all([
+      client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: "get_encryption_key",
+        args: [user],
+      }) as Promise<string>,
+      client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: "get_encryption_key_status",
+        args: [user],
+      }) as Promise<string>,
+    ])
+    const parsed = JSON.parse(regRaw) as RegistryEntry
     if (!parsed.pubkey) return null
+    parsed.status = String(statusRaw ?? "unverified")
     return parsed
   } catch {
     return null
@@ -142,7 +152,10 @@ export function NDAWizard() {
     }
   }, [counterpartyHex])
 
-  const encryptedReady = !!senderKey && !!counterpartyKey && ownKeystoreUnlocked
+  const senderVerified = senderKey?.status === "verified"
+  const counterpartyVerified = counterpartyKey?.status === "verified"
+  const encryptedReady =
+    !!senderKey && !!counterpartyKey && senderVerified && counterpartyVerified && ownKeystoreUnlocked
 
   const handleGenerateSalt = () => {
     setSalt(generateSalt())
@@ -354,20 +367,25 @@ export function NDAWizard() {
                       </p>
                       <ul className="text-xs mt-2 space-y-1">
                         <li className="flex items-center gap-2">
-                          {senderKey ? (
+                          {senderVerified ? (
                             <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                           ) : (
                             <XCircle className="w-3 h-3 text-rose-500" />
                           )}
-                          <span>Your encryption key on-chain</span>
+                          <span>
+                            Your key AI-attested (status: {senderKey?.status ?? "none"})
+                          </span>
                         </li>
                         <li className="flex items-center gap-2">
-                          {counterpartyKey ? (
+                          {counterpartyVerified ? (
                             <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                           ) : (
                             <XCircle className="w-3 h-3 text-rose-500" />
                           )}
-                          <span>Counterparty encryption key on-chain</span>
+                          <span>
+                            Counterparty key AI-attested (status:{" "}
+                            {counterpartyKey?.status ?? "none"})
+                          </span>
                         </li>
                         <li className="flex items-center gap-2">
                           {ownKeystoreUnlocked ? (

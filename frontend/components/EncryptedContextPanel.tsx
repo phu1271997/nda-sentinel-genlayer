@@ -2,10 +2,19 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Lock, Unlock, KeyRound, AlertTriangle } from "lucide-react"
-import { activeAddress, client, CONTRACT_ADDRESS } from "@/lib/genlayer"
-import { decryptFromEnvelope } from "@/lib/e2ee"
+import { Lock, Unlock, KeyRound, AlertTriangle, RefreshCcw } from "lucide-react"
+import {
+  activeAddress,
+  assertWritable,
+  client,
+  CONTRACT_ADDRESS,
+  ensureCorrectChainBeforeWrite,
+  explorerTxUrl,
+  WalletNotReadyError,
+} from "@/lib/genlayer"
+import { decryptFromEnvelope, encryptToRecipient } from "@/lib/e2ee"
 import { getUnlockedKeypair } from "@/lib/keyring"
+import { parseContractError } from "@/lib/utils"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -29,6 +38,8 @@ export function EncryptedContextPanel({ ndaId, partyA, partyB }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [decrypting, setDecrypting] = useState(false)
+  const [rotating, setRotating] = useState(false)
+  const [txHash, setTxHash] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -78,6 +89,63 @@ export function EncryptedContextPanel({ ndaId, partyA, partyB }: Props) {
     : isPartyB
       ? state?.ciphertext_b
       : ""
+
+  const rotateSessionKey = async () => {
+    setError(null)
+    setRotating(true)
+    setTxHash(null)
+    try {
+      if (!decrypted) throw new Error("Decrypt first — rotation encrypts the plaintext under a new session key.")
+      const kp = getUnlockedKeypair(activeAddress)
+      if (!kp) throw new Error("Unlock your keystore at /keys.")
+      // Fetch fresh pubkey for both parties.
+      const [keyARaw, keyBRaw] = await Promise.all([
+        client.readContract({
+          address: CONTRACT_ADDRESS,
+          functionName: "get_encryption_key",
+          args: [partyA],
+        }) as Promise<string>,
+        client.readContract({
+          address: CONTRACT_ADDRESS,
+          functionName: "get_encryption_key",
+          args: [partyB],
+        }) as Promise<string>,
+      ])
+      const kA = JSON.parse(keyARaw) as { pubkey: string; algo: string }
+      const kB = JSON.parse(keyBRaw) as { pubkey: string; algo: string }
+      if (!kA.pubkey || !kB.pubkey) throw new Error("Both parties must have registered pubkeys.")
+      const [newA, newB] = await Promise.all([
+        encryptToRecipient(kA.pubkey, decrypted),
+        encryptToRecipient(kB.pubkey, decrypted),
+      ])
+      const meta = JSON.stringify({
+        algo: "ecdh-p256+hkdf-sha256+aes-256-gcm",
+        v: 1,
+        rotated_at: Date.now(),
+        rotated_by: activeAddress.toLowerCase(),
+      })
+      await assertWritable()
+      await ensureCorrectChainBeforeWrite()
+      const hash = (await client.writeContract({
+        address: CONTRACT_ADDRESS,
+        functionName: "rotate_nda_session_key",
+        args: [BigInt(ndaId), newA, newB, meta],
+        value: BigInt(0),
+      })) as `0x${string}`
+      setTxHash(hash)
+      await client.waitForTransactionReceipt({
+        hash: hash as unknown as `0x${string}` & { length: 66 },
+        status: "ACCEPTED" as never,
+        retries: 120,
+        interval: 3000,
+      })
+    } catch (err) {
+      if (err instanceof WalletNotReadyError) setError(err.message)
+      else setError(parseContractError(err))
+    } finally {
+      setRotating(false)
+    }
+  }
 
   const handleDecrypt = async () => {
     setError(null)
@@ -138,6 +206,30 @@ export function EncryptedContextPanel({ ndaId, partyA, partyB }: Props) {
                 }
               })()}
             </pre>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={rotateSessionKey}
+                disabled={rotating}
+                className="text-blue-700 dark:text-blue-300"
+              >
+                <RefreshCcw className={`w-4 h-4 mr-1 ${rotating ? "animate-spin" : ""}`} />
+                {rotating ? "Rotating…" : "Rotate session key"}
+              </Button>
+            </div>
+            {txHash ? (
+              <p className="text-xs text-slate-500">
+                Rotation tx:{" "}
+                <a
+                  className="text-blue-600 dark:text-blue-400 hover:underline font-mono"
+                  href={explorerTxUrl(txHash)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {txHash.slice(0, 10)}…{txHash.slice(-8)}
+                </a>
+              </p>
+            ) : null}
           </div>
         ) : (
           <div className="space-y-3">
