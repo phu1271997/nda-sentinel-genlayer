@@ -9,6 +9,61 @@ resubmission-review feedback item(s) it addresses.
 
 ---
 
+## [0.2.23] — 2026-09-07 — Achievement Badges + Leaderboard
+
+**Contract change — redeploy required.**
+
+Milestone 2 of 4. Adds a soul-bound-style achievement layer that
+auto-mints as users interact with the protocol: create an NDA, activate
+one, submit a leak report, win an appeal, hit reputation thresholds,
+register a publisher identity, register an encryption key, or clear
+enough settlements. Badges are non-transferable, tiered, and derived
+deterministically from the contract's existing state — no admin call
+grants them.
+
+### Contract (`contracts/nda_sentinel.py`)
+- **Badge codes** (10 total): `first_nda`, `first_activation`,
+  `first_report`, `confirmed_hunter` (tiers 1/5/10/25),
+  `appeal_champion` (tiers 1/3/5), `verified_publisher`,
+  `encrypted_adopter`, `slashed_whale` (tiers 10/100/1000 GEN),
+  `settler` (tiers 3/5/10), `reputation_elite` (score ≥ 1300).
+- **Auto-award hooks** wired into `create_nda`, `create_encrypted_nda`,
+  `activate_nda`, `report_leak` (report + confirmed hunter + whale +
+  elite check), `appeal` (overturn winners), `register_publisher_identity`,
+  `_finalize_verdict_internal` (settler).
+- **Storage** — `user_badges_json`, `badge_holders_json` (index of
+  addresses per code), `user_settle_count`, `user_total_slashed`,
+  and a leaderboard snapshot pair (`leaderboard_snapshot_json`,
+  `leaderboard_snapshot_at`).
+- **Views** — `get_badges(user)`, `get_badge_holders(code)`,
+  `get_badge_catalog()`, `get_user_scorecard(user)` (single-call profile),
+  `get_leaderboard()`.
+- **Write** — `rebuild_leaderboard(top_k)` walks the badge-holder indexes,
+  sorts by (badge_score desc, reputation desc, confirmed_reports desc),
+  and writes the top-K snapshot. Gas-bounded: `top_k` clamped 1–100,
+  scan uses the flat holder indexes (no per-NDA walk).
+- **Events** — `badge_awarded`, `reputation_elite_reached`.
+
+### Frontend (`frontend/`)
+- **`components/BadgeGrid.tsx`** — presentation for 10 badge codes with
+  gradient icon tiles, tier labels (Bronze / Silver / Gold / Platinum),
+  and tooltip descriptions.
+- **`/badges` page** — full scorecard for the current wallet: reputation,
+  counters, badges owned, badge-catalog table with holder counts.
+- **`/leaderboard` page** — table of the top 25 addresses from the
+  contract snapshot with #1–#3 highlighted and a "Rebuild" button that
+  invokes `rebuild_leaderboard(25)`.
+- **Nav** — "Badges" (award icon) and "Leaderboard" (trophy icon)
+  entries added to the site header.
+
+### Migration
+- No storage migration needed — TreeMap lookups return the empty default
+  for any address that has not yet earned a badge.
+- Historic users won't get retroactive badges until they touch the
+  protocol again; the award hooks fire on the next lifecycle event.
+
+---
+
 ## [0.2.22] — 2026-09-07 — E2E Encryption Vault + Public Key Registry
 
 **Contract change — redeploy required.**

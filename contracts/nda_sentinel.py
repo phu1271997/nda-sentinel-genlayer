@@ -1,4 +1,4 @@
-# v0.2.22
+# v0.2.23
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 from genlayer import *
 from dataclasses import dataclass
@@ -87,6 +87,33 @@ ALLOWED_ENC_ALGOS = ("ecdh-p256", "x25519")
 
 EVENT_ENCRYPTION_KEY_REGISTERED = "encryption_key_registered"
 EVENT_ENCRYPTED_NDA_CREATED = "encrypted_nda_created"
+
+# --- Achievement badges + leaderboard (v0.2.23, Milestone 2) ---
+# Soul-bound-style badges (non-transferable, stored per-address) that
+# auto-mint when a user hits a lifecycle threshold: their first NDA,
+# their first confirmed leak report, an appeal win, high-slash tier,
+# etc. Every badge is (code, tier, earned_at). Tiers are integer levels
+# where higher = rarer.
+BADGE_FIRST_NDA = "first_nda"
+BADGE_FIRST_ACTIVATION = "first_activation"
+BADGE_FIRST_REPORT = "first_report"
+BADGE_CONFIRMED_HUNTER = "confirmed_hunter"          # 1/5/10/25 confirmed reports
+BADGE_APPEAL_CHAMPION = "appeal_champion"            # 1/3/5 overturn wins
+BADGE_VERIFIED_PUBLISHER = "verified_publisher"      # registered publisher_identity
+BADGE_ENCRYPTED_ADOPTER = "encrypted_adopter"        # first encrypted NDA
+BADGE_SLASHED_WHALE = "slashed_whale"                # total slashed >= 100 GEN across their reports
+BADGE_SETTLER = "settler"                            # called finalize/withdraw >=3 times
+BADGE_REPUTATION_ELITE = "reputation_elite"          # reputation >= 1300
+
+ALL_BADGE_CODES = (
+    BADGE_FIRST_NDA, BADGE_FIRST_ACTIVATION, BADGE_FIRST_REPORT,
+    BADGE_CONFIRMED_HUNTER, BADGE_APPEAL_CHAMPION,
+    BADGE_VERIFIED_PUBLISHER, BADGE_ENCRYPTED_ADOPTER,
+    BADGE_SLASHED_WHALE, BADGE_SETTLER, BADGE_REPUTATION_ELITE,
+)
+
+EVENT_BADGE_AWARDED = "badge_awarded"
+EVENT_REPUTATION_ELITE = "reputation_elite_reached"
 
 EVENT_PUBLISHER_REGISTERED = "publisher_registered"
 
@@ -231,6 +258,17 @@ class NDASentinel(gl.Contract):
     nda_ciphertext_meta_json: TreeMap[u256, str]
     nda_is_encrypted: TreeMap[u256, bool]
 
+    # Achievement badges (v0.2.23). `user_badges_json` stores a JSON list
+    # of {code, tier, earned_at} entries per address. `badge_holders_json`
+    # is a code -> JSON list of addresses that hold that badge, so the
+    # leaderboard views can be paginated without walking the whole state.
+    user_badges_json: TreeMap[str, str]
+    user_settle_count: TreeMap[str, u256]
+    user_total_slashed: TreeMap[str, u256]
+    badge_holders_json: TreeMap[str, str]
+    leaderboard_snapshot_json: str
+    leaderboard_snapshot_at: u256
+
     def __init__(self):
         self.owner = gl.message.sender_address
         self.next_nda_id = u256(0)
@@ -241,6 +279,8 @@ class NDASentinel(gl.Contract):
         self.total_appeals_overturned = u256(0)
         self.total_appeals_upheld = u256(0)
         self.total_report_fees_collected = u256(0)
+        self.leaderboard_snapshot_json = "[]"
+        self.leaderboard_snapshot_at = u256(0)
 
     def _emit(self, kind: str, nda_id: u256, actor: Address, meta: dict) -> None:
         """Append one event to the on-chain log. Meta is dict-serialised to
@@ -316,6 +356,97 @@ class NDASentinel(gl.Contract):
         if score < REPUTATION_TIER_FLAGGED:
             return "flagged"
         return "newcomer"
+
+    # ------------------------------------------------------------------
+    # v0.2.23 — Achievement badges (soul-bound-style, non-transferable)
+    # ------------------------------------------------------------------
+
+    def _load_badges(self, key: str) -> list:
+        try:
+            existing = json.loads(self.user_badges_json.get(key, "[]"))
+            if not isinstance(existing, list):
+                return []
+            return existing
+        except Exception:
+            return []
+
+    def _has_badge(self, key: str, code: str, tier: int) -> bool:
+        for b in self._load_badges(key):
+            if isinstance(b, dict) and b.get("code") == code and int(b.get("tier", 0)) >= tier:
+                return True
+        return False
+
+    def _award_badge(self, addr: Address, code: str, tier: int) -> bool:
+        """Award a badge if the user does not already hold that (code, tier)
+        or higher. Returns True when a new badge was actually written."""
+        if code not in ALL_BADGE_CODES:
+            return False
+        key = self._addr_key(addr)
+        badges = self._load_badges(key)
+        # Upgrade in place if same code with lower tier already held
+        upgraded = False
+        for i, b in enumerate(badges):
+            if isinstance(b, dict) and b.get("code") == code:
+                if int(b.get("tier", 0)) >= tier:
+                    return False  # already at or above this tier
+                badges[i] = {"code": code, "tier": tier, "earned_at": int(self._now())}
+                upgraded = True
+                break
+        if not upgraded:
+            badges.append({"code": code, "tier": tier, "earned_at": int(self._now())})
+            # Track holders index — only on FIRST award (any tier).
+            try:
+                holders = json.loads(self.badge_holders_json.get(code, "[]"))
+                if not isinstance(holders, list):
+                    holders = []
+            except Exception:
+                holders = []
+            if key not in holders:
+                holders.append(key)
+                self.badge_holders_json[code] = json.dumps(holders)
+        self.user_badges_json[key] = json.dumps(badges)
+        self._emit(EVENT_BADGE_AWARDED, u256(0), addr, {
+            "code": code,
+            "tier": tier,
+        })
+        return True
+
+    def _tier_for_confirmed_reports(self, n: int) -> int:
+        """Bronze/Silver/Gold/Platinum tiers on the confirmed-hunter track."""
+        if n >= 25: return 4
+        if n >= 10: return 3
+        if n >= 5:  return 2
+        if n >= 1:  return 1
+        return 0
+
+    def _tier_for_overturn_wins(self, n: int) -> int:
+        if n >= 5: return 3
+        if n >= 3: return 2
+        if n >= 1: return 1
+        return 0
+
+    def _tier_for_settle_count(self, n: int) -> int:
+        if n >= 10: return 3
+        if n >= 5:  return 2
+        if n >= 3:  return 1
+        return 0
+
+    def _tier_for_total_slashed(self, wei: int) -> int:
+        """Bronze at 10, Silver at 100, Gold at 1000 GEN (cumulative)."""
+        gen = wei // (10 ** 18)
+        if gen >= 1000: return 3
+        if gen >= 100:  return 2
+        if gen >= 10:   return 1
+        return 0
+
+    def _maybe_check_reputation_elite(self, addr: Address) -> None:
+        score = self._rep_get(addr)
+        if score >= 1300:
+            newly = self._award_badge(addr, BADGE_REPUTATION_ELITE, 1)
+            if newly:
+                self._emit(EVENT_REPUTATION_ELITE, u256(0), addr, {
+                    "score": str(score),
+                })
 
     def _now(self) -> u256:
         """Get deterministic blockchain timestamp safely."""
@@ -413,6 +544,7 @@ class NDASentinel(gl.Contract):
             "stake": str(val),
             "expiry": str(expiry_timestamp),
         })
+        self._award_badge(sender, BADGE_FIRST_NDA, 1)
 
         return new_id
 
@@ -438,6 +570,7 @@ class NDASentinel(gl.Contract):
         nda.activated_at = self._now()
         self.ndas[idx] = nda
         self._emit(EVENT_NDA_ACTIVATED, nda_id, nda.party_b, {"stake_b": str(val)})
+        self._award_badge(nda.party_b, BADGE_FIRST_ACTIVATION, 1)
 
     @gl.public.write
     def cancel_pending_nda(self, nda_id: u256) -> None:
@@ -757,6 +890,8 @@ Count how many of the three sources you were able to fetch AND whose content cor
             "sources_evaluated": int(result_payload.get("sources_evaluated", 0) or 0),
             "sources_confirming": int(result_payload.get("sources_confirming", 0) or 0),
         })
+        # Milestone 2: award "first_report" on any consensus-reached report.
+        self._award_badge(sender, BADGE_FIRST_REPORT, 1)
 
         if verdict == "violation_confirmed":
             resp_party_str = result_payload.get("responsible_party", "unknown")
@@ -821,6 +956,18 @@ Count how many of the three sources you were able to fetch AND whose content cor
                         "treasury_fee_escrow": str(treasury_fee),
                         "appeal_deadline": str(nda.appeal_deadline),
                     })
+                    # Milestone 2 badge awards:
+                    confirmed_n = int(self.reporter_confirmed_count.get(sender_key, u256(0)))
+                    hunter_tier = self._tier_for_confirmed_reports(confirmed_n)
+                    if hunter_tier > 0:
+                        self._award_badge(sender, BADGE_CONFIRMED_HUNTER, hunter_tier)
+                    prior_slashed = int(self.user_total_slashed.get(sender_key, u256(0)))
+                    prior_slashed += int(slash_pool)
+                    self.user_total_slashed[sender_key] = u256(prior_slashed)
+                    whale_tier = self._tier_for_total_slashed(prior_slashed)
+                    if whale_tier > 0:
+                        self._award_badge(sender, BADGE_SLASHED_WHALE, whale_tier)
+                    self._maybe_check_reputation_elite(sender)
                 else:
                     self.withdrawable[sender] = u256(int(self.withdrawable.get(sender, u256(0))) + int(val))
             else:
@@ -896,6 +1043,14 @@ Count how many of the three sources you were able to fetch AND whose content cor
             "compensation": str(compensation),
             "treasury_fee": str(treasury_fee),
         })
+        # Milestone 2 — Settler badge (tiered) tracked on the caller.
+        sender_key_s = self._addr_key(sender)
+        prior_settle = int(self.user_settle_count.get(sender_key_s, u256(0)))
+        prior_settle += 1
+        self.user_settle_count[sender_key_s] = u256(prior_settle)
+        settler_tier = self._tier_for_settle_count(prior_settle)
+        if settler_tier > 0:
+            self._award_badge(sender, BADGE_SETTLER, settler_tier)
 
     @gl.public.write
     def finalize_verdict(self, nda_id: u256) -> None:
@@ -1233,6 +1388,12 @@ Return STRICT JSON:
                 "restored_collateral": str(restored_collateral),
                 "appeal_fee_refunded": str(val),
             })
+            # Milestone 2: appeal-champion tier based on overturn wins.
+            wins_now = int(self.overturn_wins_count.get(appellant_key, u256(0)))
+            champ_tier = self._tier_for_overturn_wins(wins_now)
+            if champ_tier > 0:
+                self._award_badge(sender, BADGE_APPEAL_CHAMPION, champ_tier)
+            self._maybe_check_reputation_elite(sender)
 
         else: # upheld or inconclusive
             self.treasury = u256(int(self.treasury) + int(val))
@@ -1373,6 +1534,7 @@ Return JSON:
             "handle": handle_local,
             "proof_url": proof_url_local,
         })
+        self._award_badge(sender, BADGE_VERIFIED_PUBLISHER, 1)
 
     @gl.public.view
     def get_publisher_identity(self, user: Address) -> str:
@@ -1823,6 +1985,9 @@ Return JSON:
             "expiry": str(expiry_timestamp),
             "encrypted": True,
         })
+        # Milestone 2 badges — first encrypted NDA (adopter) + baseline creator.
+        self._award_badge(sender, BADGE_FIRST_NDA, 1)
+        self._award_badge(sender, BADGE_ENCRYPTED_ADOPTER, 1)
         return new_id
 
     @gl.public.view
@@ -1852,6 +2017,125 @@ Return JSON:
             "max_ciphertext_len": str(MAX_ENC_CIPHERTEXT_LEN),
             "max_public_hint_len": str(MAX_ENC_PUBLIC_HINT_LEN),
             "algos": list(ALLOWED_ENC_ALGOS),
+        })
+
+    # ------------------------------------------------------------------
+    # v0.2.23 — Achievement badges + leaderboard views
+    # ------------------------------------------------------------------
+
+    @gl.public.view
+    def get_badges(self, user: Address) -> str:
+        key = self._addr_key(user)
+        return self.user_badges_json.get(key, "[]")
+
+    @gl.public.view
+    def get_badge_holders(self, code: str) -> str:
+        return self.badge_holders_json.get(code, "[]")
+
+    @gl.public.view
+    def get_badge_catalog(self) -> str:
+        catalog = []
+        for c in ALL_BADGE_CODES:
+            catalog.append({
+                "code": c,
+                "max_tier": {
+                    BADGE_CONFIRMED_HUNTER: 4,
+                    BADGE_APPEAL_CHAMPION: 3,
+                    BADGE_SETTLER: 3,
+                    BADGE_SLASHED_WHALE: 3,
+                }.get(c, 1),
+            })
+        return json.dumps(catalog)
+
+    @gl.public.view
+    def get_user_scorecard(self, user: Address) -> str:
+        """Full user profile: reputation, badges, activity counters.
+
+        Consumed by the leaderboard + /profile pages."""
+        key = self._addr_key(user)
+        score = self._rep_get(user)
+        return json.dumps({
+            "address": key,
+            "reputation": {
+                "score": str(score),
+                "tier": self._tier(score),
+            },
+            "badges": self._load_badges(key),
+            "counters": {
+                "reports_submitted": str(self.reporter_reports_count.get(key, u256(0))),
+                "reports_confirmed": str(self.reporter_confirmed_count.get(key, u256(0))),
+                "overturn_wins": str(self.overturn_wins_count.get(key, u256(0))),
+                "false_reports": str(self.false_report_count.get(key, u256(0))),
+                "settlements": str(self.user_settle_count.get(key, u256(0))),
+                "total_slashed_by_this_reporter": str(self.user_total_slashed.get(key, u256(0))),
+            },
+            "publisher_handle": self.publisher_handle.get(key, ""),
+            "encryption_key_registered": len(self.encryption_pubkey.get(key, "")) > 0,
+        })
+
+    @gl.public.write
+    def rebuild_leaderboard(self, top_k: u256) -> None:
+        """Anyone can call. Walks every recent NDA participant, sorts them
+        by (badge_count desc, reputation desc, confirmed_reports desc),
+        and writes the top-K snapshot to storage. Bounded scan so the
+        gas cost stays predictable — front-ends can call it whenever
+        they want the leaderboard refreshed.
+        """
+        limit = int(top_k)
+        if limit <= 0 or limit > 100:
+            limit = 25
+
+        # Gather candidate addresses from the badge_holders indexes so we
+        # don't have to walk `ndas` (which can be arbitrarily large).
+        seen_keys: set = set()
+        for code in ALL_BADGE_CODES:
+            try:
+                holders = json.loads(self.badge_holders_json.get(code, "[]"))
+                if isinstance(holders, list):
+                    for h in holders:
+                        if isinstance(h, str):
+                            seen_keys.add(h)
+            except Exception:
+                continue
+
+        scored = []
+        for k in seen_keys:
+            score = 0
+            if self.reputation_initialized.get(k, False):
+                score = int(self.reputation_score.get(k, u256(0)))
+            else:
+                score = REPUTATION_BASELINE
+            badges = self._load_badges(k)
+            badge_score = 0
+            for b in badges:
+                if isinstance(b, dict):
+                    badge_score += 10 * int(b.get("tier", 0)) + 5
+            scored.append({
+                "address": k,
+                "reputation": score,
+                "badge_count": len(badges),
+                "badge_score": badge_score,
+                "reports_confirmed": int(self.reporter_confirmed_count.get(k, u256(0))),
+                "overturn_wins": int(self.overturn_wins_count.get(k, u256(0))),
+            })
+
+        # Sort: badge_score desc, reputation desc, reports_confirmed desc.
+        scored.sort(
+            key=lambda r: (
+                -r["badge_score"],
+                -r["reputation"],
+                -r["reports_confirmed"],
+            )
+        )
+        top = scored[:limit]
+        self.leaderboard_snapshot_json = json.dumps(top)
+        self.leaderboard_snapshot_at = self._now()
+
+    @gl.public.view
+    def get_leaderboard(self) -> str:
+        return json.dumps({
+            "snapshot_at": str(self.leaderboard_snapshot_at),
+            "rows": json.loads(self.leaderboard_snapshot_json or "[]"),
         })
 
     @gl.public.view
