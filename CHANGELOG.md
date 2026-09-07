@@ -9,6 +9,106 @@ resubmission-review feedback item(s) it addresses.
 
 ---
 
+## [0.2.27] — 2026-09-07 — Milestone 2 Rebuild: AI-Adjudicated Bounty Board + Endorsement Web
+
+**Contract change — redeploy required.**
+
+**This entry SUPERSEDES the v0.2.23 badges+leaderboard milestone.** The
+prior Milestone 2 was pure deterministic accounting — every badge
+triggered from a counter, the leaderboard was a sort — and Solidity
+could ship the same thing in an afternoon. This rebuild layers two
+AI-native primitives on top so the milestone stands on GenLayer's own
+capability set.
+
+### Contract (`contracts/nda_sentinel.py`) — 8 new public methods
+
+Bounty board:
+
+- **`create_bounty(title, description, rubric, deadline) payable`**
+  — Post a public bounty. Reward pool is locked at creation
+  (≥ 0.1 GEN). Deadline: 1 hour – 60 days out.
+- **`sponsor_bounty(bounty_id) payable`** — Anyone can top up an open
+  bounty's reward pool.
+- **`submit_bounty_entry(bounty_id, proof_url, notes)`** — Participants
+  publish their work at `proof_url`; the AI Jury will fetch it at
+  adjudication time. `notes` is advisory only. One entry per
+  participant per bounty; 50 entries max per bounty.
+- **`cancel_bounty(bounty_id)`** — Creator-only, before any entry.
+  Full refund of the pool.
+- **`adjudicate_bounty(bounty_id)`** — Anyone-callable after deadline.
+  Runs `gl.eq_principle.prompt_comparative`: every validator
+  independently fetches every entry's proof URL via `web.render`,
+  scores against the rubric, and consensus-agrees on a ranked winner
+  set (up to 5 winners) with `share_bps` payout split. Contract
+  distributes pro-rata in a single tx, minus a 3 % protocol fee.
+  Winner shares are rescaled + rounded so they always sum to 10000
+  bps. Adjudicator earns the `adjudicator` badge — the operation is
+  self-funding, someone in the community always wants to call it.
+
+Endorsement web:
+
+- **`endorse_user(target, proof_url, challenge, weight)`** — Cast a
+  directed trust edge. Endorser must host a proof page containing
+  their own address + target's address + challenge + the literal
+  `ENDORSE`; validators AI-verify it via the shared
+  `_run_attestation` primitive from v0.2.26. An adversary cannot
+  forge an endorsement they cannot publish.
+- **`revoke_endorsement(target)`** — Deterministic revocation with
+  clean counter adjustment.
+- **Endorsement score** — `get_endorsement_score(user)` returns the
+  sum of received weights + a sub-linear count-bonus so a single
+  whale cannot pump the graph on their own.
+
+### Views (6 new)
+
+`get_bounty`, `get_bounty_entries`, `get_user_bounties` (created +
+entered), `get_open_bounties` (list of every still-open + within-window
+bounty), `get_bounty_count`, `get_bounty_limits`;
+`get_endorsements_received`, `get_endorsements_given`,
+`get_endorsement_score`.
+
+### Events (7 new)
+
+`bounty_created`, `bounty_sponsored`, `bounty_entry_submitted`,
+`bounty_adjudicated`, `bounty_cancelled`, `endorsement_created`,
+`endorsement_revoked`.
+
+### Notify kinds (5 new, wired into v0.2.24 inbox)
+
+`bounty_created`, `bounty_entry_submitted`, `bounty_won`,
+`bounty_adjudicated`, `endorsement_received`.
+
+### New badge codes (5 stacked on the v0.2.23 badge system)
+
+- `bounty_creator` — Bronze/Silver/Gold at 1/3/10 bounties posted.
+- `bounty_winner` — auto-awarded on each adjudicated win.
+- `endorsed_pro` — 5/10/25 endorsements received.
+- `endorser` — 5/10/25 endorsements given.
+- `adjudicator` — 1/5/10 successful adjudications run.
+
+### Frontend (`frontend/`)
+
+- **`/bounties`** — dashboard: open bounties table + your posted +
+  entered lists.
+- **`/bounties/new`** — creation form with rubric guidance.
+- **`/bounties/[id]`** — full detail: rubric, entries list with
+  clickable proof URLs, submit-entry / sponsor / cancel / adjudicate
+  cards depending on state + wallet, winners table with rationale.
+- **`/endorse`** — endorsement web: score card, endorse-someone form
+  with copy-ready proof template + challenge auto-fill, list of
+  endorsements you gave (with revoke) and received.
+- **Nav** — `Bounties` (Coins icon) + `Endorse` (Handshake icon)
+  entries added to the site header.
+
+### Migration
+
+- Independent storage from the v0.2.23 badge system — badge tier
+  helpers just add three new codes; existing badge history is
+  preserved.
+- No off-chain indexer needed; every read is a single view call.
+
+---
+
 ## [0.2.26] — 2026-09-07 — Milestone 1 Rebuild: Verified E2EE + AI-Attested Keys + Social Recovery
 
 **Contract change — redeploy required.**
