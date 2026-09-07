@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { AlertTriangle, Award, BadgeCheck, BarChart3, KeyRound, LucideIcon, Menu, Shield, Trophy, X } from "lucide-react"
+import { AlertTriangle, Award, BadgeCheck, BarChart3, KeyRound, LucideIcon, Menu, Shield, Trophy, Users, X } from "lucide-react"
 import { useEffect, useState } from "react"
 import { InboxBell } from "./InboxBell"
 
@@ -15,6 +15,7 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { href: "/ndas", label: "Dashboard" },
+  { href: "/groups", label: "Groups", icon: Users },
   { href: "/report", label: "Report Leak", accent: "rose", icon: AlertTriangle },
   { href: "/identity", label: "Identity", accent: "emerald", icon: BadgeCheck },
   { href: "/keys", label: "Keys", accent: "emerald", icon: KeyRound },

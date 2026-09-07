@@ -9,6 +9,76 @@ resubmission-review feedback item(s) it addresses.
 
 ---
 
+## [0.2.25] — 2026-09-07 — Multi-Party (Group) NDA + Threshold Consensus
+
+**Contract change — redeploy required.**
+
+Milestone 4 of 4. Extends the protocol from 1:1 NDAs to multi-party
+group NDAs supporting 3–10 signers with configurable activation
+threshold and proportional-stake compensation. When a leak is
+confirmed inside a group, the AI Jury must attribute the violation to
+one of the group's own listed addresses; the contract slashes that
+address's stake and distributes compensation to every non-violator in
+proportion to their own stake share.
+
+### Contract (`contracts/nda_sentinel.py`)
+- **New dataclass** `GroupNDA` — id, creator, scope, context, expiry,
+  threshold, parties_count, activated_count, status, timestamps,
+  keyword_hash_count, total_stake, slashed_amount, violator, reporter,
+  suspect_url, verdict_json.
+- **`create_group_nda(parties_json, scope, context, expiry, threshold,
+  keyword_hashes_json)`** — payable. Validates 3–10 unique parties
+  (caller must be listed), threshold in [1, N], salted-hash format,
+  min stake ≥ 0.1 GEN. Marks the creator as the first activated
+  party. Notifies every other party via the v0.2.24 inbox.
+- **`join_group_nda(group_id)`** — payable. Late-comer activation.
+  Any listed party who has not yet activated calls this with their
+  stake; when the activation count crosses `threshold`, the NDA flips
+  to `active` and every party is inboxed.
+- **`report_group_leak(group_id, suspect_url, revealed_keywords_json,
+  salt)`** — payable. Any listed party can call. Runs a bespoke
+  eq_principle prompt asking the jury to attribute the leak to one
+  address on the group members list (or "unknown"). Confirmed
+  violations slash the violator's stake, pay the reporter an 80 %
+  reward, drop a 3 % treasury fee, and distribute the remaining
+  compensation across non-violators weighted by their stake shares.
+  Awards the reporter's `confirmed_hunter` badge tier.
+- **`expire_group_nda(group_id)`** — anyone-callable post-expiry cleanup
+  that refunds every remaining stake to its owner.
+- **Views** — `get_group_nda(id)`, `get_group_membership(id)` (merged
+  address + stake + activated rows), `get_user_group_ndas(user)`,
+  `get_group_count()`, `get_group_keyword_hashes(id)`,
+  `get_group_limits()`.
+- **New events** — `group_nda_created`, `group_nda_joined`,
+  `group_nda_activated`, `group_leak_reported`,
+  `group_violation_confirmed`, `group_nda_expired`.
+- **New notify kinds** — `group_nda_created`, `group_nda_activated`,
+  `group_violation_confirmed` wired into the v0.2.24 inbox so every
+  member gets a receipt at each lifecycle stage.
+- **Storage** — `group_ndas: DynArray[GroupNDA]`, `group_index_by_id`,
+  `group_parties_json`, `group_stakes_json`, `group_activated_json`,
+  `group_keyword_hashes_json`, `group_user_ids_json`, `next_group_id`.
+
+### Frontend (`frontend/`)
+- **`/ndas/new-group`** — 3–10 party wizard with dynamic add/remove
+  rows, threshold selector (0 = default to all parties), same
+  salted-hash + vault-download flow as 1:1 NDAs.
+- **`/groups`** — dashboard of the caller's group NDAs (status pill,
+  activation ratio, total stake, deep link).
+- **`/groups/[groupId]`** — detail page with member table (stake +
+  activated flag + explorer link), join card for non-activated
+  members, report-leak card for active members, expire card once past
+  expiry, verdict card with attribution + slash amount + evidence
+  URL on `leaked` status.
+- **Nav** — new "Groups" link (Users icon) in the site header.
+
+### Migration
+- Uses independent storage from 1:1 NDAs — no state migration.
+- The 1:1 flow (`create_nda`, `report_leak`, `appeal`) is untouched;
+  existing NDAs behave exactly as before.
+
+---
+
 ## [0.2.24] — 2026-09-07 — On-chain Notification Inbox + Preferences
 
 **Contract change — redeploy required.**
