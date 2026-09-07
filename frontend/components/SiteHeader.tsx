@@ -4,6 +4,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { AlertTriangle, Award, BadgeCheck, BarChart3, KeyRound, LucideIcon, Menu, Shield, Trophy, X } from "lucide-react"
 import { useEffect, useState } from "react"
+import { InboxBell } from "./InboxBell"
 
 type NavItem = {
   href: string
@@ -81,6 +82,7 @@ export function SiteHeader() {
               </Link>
             )
           })}
+          <InboxBell />
           <Link
             href="/ndas/new"
             className="ml-2 text-sm font-semibold px-3.5 py-1.5 rounded-md bg-purple-600 hover:bg-purple-700 text-white transition inline-flex items-center gap-1.5"

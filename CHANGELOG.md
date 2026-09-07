@@ -9,6 +9,63 @@ resubmission-review feedback item(s) it addresses.
 
 ---
 
+## [0.2.24] — 2026-09-07 — On-chain Notification Inbox + Preferences
+
+**Contract change — redeploy required.**
+
+Milestone 3 of 4. Adds a per-address on-chain inbox: every lifecycle
+event touching a user (party to the NDA, reporter, appellant, settler,
+or badge earner) enqueues a rich notification the user can read, mark
+read, clear, and pre-filter by kind. A polling bell in the site header
+surfaces the unread count, and an opt-in browser Notifications hook
+mirrors it to the desktop OS. Preferences are stored on-chain so they
+follow the wallet across devices.
+
+### Contract (`contracts/nda_sentinel.py`)
+- **`_notify(recipient, kind, nda_id, title, body)`** private helper
+  respects per-user opt-outs, caps queue length at 200 (drops from the
+  head, adjusts the unread counter accordingly), and emits a
+  `notification_queued` event alongside the inbox write.
+- **Lifecycle wire-ups** — inserts `_notify` calls at:
+  `create_nda`, `create_encrypted_nda` (counterparty),
+  `activate_nda` (party A), `cancel_pending_nda` (party B),
+  `report_leak` (reporter + violator + non-violator),
+  `appeal` (original reporter),
+  overturn path (appellant + reporter),
+  upheld path (appellant + reporter),
+  `_finalize_verdict_internal` (reporter + non-violator),
+  `expire_and_withdraw` (both parties),
+  `_award_badge` (recipient).
+- **Views** — `get_inbox(user)`, `get_inbox_page(user, from, limit)`
+  (reverse-chronological, page cap 100), `get_inbox_unread_count(user)`,
+  `get_notify_prefs(user)`, `get_notify_kinds()` (list of 11 kinds).
+- **Writes** — `set_notify_prefs(prefs_json)` (validated whitelist +
+  boolean-only values), `mark_inbox_read(up_to_seq)`,
+  `mark_all_inbox_read()`, `clear_read_inbox()`.
+- **New events** — `notification_queued`, `notification_prefs_updated`.
+- **Storage** — `user_inbox_json`, `user_inbox_unread`,
+  `user_inbox_next_seq`, `user_notify_prefs_json`.
+
+### Frontend (`frontend/`)
+- **`components/InboxBell.tsx`** — polls `get_inbox_unread_count` every
+  30 s, badges the site header with the unread count, and optionally
+  fires a browser Notification when the count rises (uses
+  `localStorage` to dedupe).
+- **`/inbox` page** — reverse-chronological feed with unread pill,
+  Mark-all-read / Clear-read buttons, per-kind preference toggles that
+  post to `set_notify_prefs`, deep-links to the referenced NDA.
+- **Browser Notifications opt-in** — prompt + status card on the same
+  page (unsupported / default / granted / denied).
+- **Nav** — bell added to the site header next to the "Create NDA" CTA.
+
+### Migration
+- Every existing user starts with an empty inbox and default (all-on)
+  prefs — no migration script needed.
+- Contract storage grows per-notification; the 200-entry cap plus the
+  `clear_read_inbox` write keeps it bounded.
+
+---
+
 ## [0.2.23] — 2026-09-07 — Achievement Badges + Leaderboard
 
 **Contract change — redeploy required.**

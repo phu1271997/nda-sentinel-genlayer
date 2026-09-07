@@ -1,4 +1,4 @@
-# v0.2.23
+# v0.2.24
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 from genlayer import *
 from dataclasses import dataclass
@@ -114,6 +114,42 @@ ALL_BADGE_CODES = (
 
 EVENT_BADGE_AWARDED = "badge_awarded"
 EVENT_REPUTATION_ELITE = "reputation_elite_reached"
+
+# --- Notification inbox (v0.2.24, Milestone 3) ---
+# Every lifecycle event that touches a user (they are a party to the NDA,
+# the reporter, the appellant, or the settler) writes an entry to their
+# on-chain inbox. Users can page through their inbox, mark items read,
+# clear read items, and toggle subscription-preference flags per event
+# kind so noisy channels can be silenced. The frontend polls
+# `get_inbox_unread_count(user)` cheaply and paginates the full inbox
+# on-demand.
+NOTIFY_KIND_NDA_CREATED = "nda_created"
+NOTIFY_KIND_NDA_ACTIVATED = "nda_activated"
+NOTIFY_KIND_LEAK_REPORTED = "leak_reported"
+NOTIFY_KIND_VIOLATION_CONFIRMED = "violation_confirmed"
+NOTIFY_KIND_APPEAL_FILED = "appeal_filed"
+NOTIFY_KIND_APPEAL_OVERTURNED = "appeal_overturned"
+NOTIFY_KIND_APPEAL_UPHELD = "appeal_upheld"
+NOTIFY_KIND_VERDICT_FINALIZED = "verdict_finalized"
+NOTIFY_KIND_NDA_EXPIRED = "nda_expired"
+NOTIFY_KIND_NDA_CANCELLED = "nda_cancelled"
+NOTIFY_KIND_BADGE_AWARDED = "badge_awarded"
+
+ALL_NOTIFY_KINDS = (
+    NOTIFY_KIND_NDA_CREATED, NOTIFY_KIND_NDA_ACTIVATED,
+    NOTIFY_KIND_LEAK_REPORTED, NOTIFY_KIND_VIOLATION_CONFIRMED,
+    NOTIFY_KIND_APPEAL_FILED, NOTIFY_KIND_APPEAL_OVERTURNED,
+    NOTIFY_KIND_APPEAL_UPHELD, NOTIFY_KIND_VERDICT_FINALIZED,
+    NOTIFY_KIND_NDA_EXPIRED, NOTIFY_KIND_NDA_CANCELLED,
+    NOTIFY_KIND_BADGE_AWARDED,
+)
+
+# Bounded inbox per user to prevent unbounded storage growth. Older
+# entries above the cap are simply dropped from the head.
+MAX_INBOX_ENTRIES = 200
+
+EVENT_NOTIFICATION_QUEUED = "notification_queued"
+EVENT_NOTIFICATION_PREFS_UPDATED = "notification_prefs_updated"
 
 EVENT_PUBLISHER_REGISTERED = "publisher_registered"
 
@@ -269,6 +305,16 @@ class NDASentinel(gl.Contract):
     leaderboard_snapshot_json: str
     leaderboard_snapshot_at: u256
 
+    # Notification inbox (v0.2.24). Per-address JSON queue of unread +
+    # read entries, per-address preference bitmap (JSON dict of
+    # {kind: bool}), per-address unread counter (kept in sync so the
+    # UI can poll it cheaply without paging through the full inbox),
+    # and a monotonic per-address seq for envelope ids.
+    user_inbox_json: TreeMap[str, str]
+    user_inbox_unread: TreeMap[str, u256]
+    user_inbox_next_seq: TreeMap[str, u256]
+    user_notify_prefs_json: TreeMap[str, str]
+
     def __init__(self):
         self.owner = gl.message.sender_address
         self.next_nda_id = u256(0)
@@ -409,6 +455,14 @@ class NDASentinel(gl.Contract):
             "code": code,
             "tier": tier,
         })
+        # Milestone 3 — inbox the recipient about the new badge.
+        # `_notify` respects per-user opt-outs so a spammy stream can
+        # be silenced without losing anything else.
+        self._notify(
+            addr, NOTIFY_KIND_BADGE_AWARDED, u256(0),
+            f"Badge earned: {code}",
+            f"Tier {tier}. See /badges to view.",
+        )
         return True
 
     def _tier_for_confirmed_reports(self, n: int) -> int:
@@ -438,6 +492,73 @@ class NDASentinel(gl.Contract):
         if gen >= 100:  return 2
         if gen >= 10:   return 1
         return 0
+
+    # ------------------------------------------------------------------
+    # v0.2.24 — Notification inbox helpers
+    # ------------------------------------------------------------------
+
+    def _notify_prefs_allows(self, key: str, kind: str) -> bool:
+        """Return True when the user has NOT opted out of `kind`.
+        Defaults to True so an untouched user still receives everything
+        (opt-out model, not opt-in)."""
+        try:
+            prefs = json.loads(self.user_notify_prefs_json.get(key, "{}"))
+            if not isinstance(prefs, dict):
+                return True
+            v = prefs.get(kind, True)
+            return bool(v)
+        except Exception:
+            return True
+
+    def _notify(self, recipient: Address, kind: str, nda_id: u256, title: str, body: str) -> None:
+        """Append one entry to `recipient`'s inbox. Silently drops when
+        the recipient has opted out of this kind. Bounded queue: the
+        oldest entry is popped once the queue exceeds MAX_INBOX_ENTRIES."""
+        if kind not in ALL_NOTIFY_KINDS:
+            return
+        key = self._addr_key(recipient)
+        if not self._notify_prefs_allows(key, kind):
+            return
+        try:
+            existing = json.loads(self.user_inbox_json.get(key, "[]"))
+            if not isinstance(existing, list):
+                existing = []
+        except Exception:
+            existing = []
+        seq_now = int(self.user_inbox_next_seq.get(key, u256(0)))
+        entry = {
+            "seq": seq_now,
+            "kind": kind,
+            "nda_id": int(nda_id),
+            "title": title[:200],
+            "body": body[:600],
+            "created_at": int(self._now()),
+            "read": False,
+        }
+        existing.append(entry)
+        # Trim from head to cap growth.
+        if len(existing) > MAX_INBOX_ENTRIES:
+            # Adjust unread count if we drop unread entries off the head.
+            drop_n = len(existing) - MAX_INBOX_ENTRIES
+            dropped_unread = 0
+            for i in range(drop_n):
+                if not existing[i].get("read", False):
+                    dropped_unread += 1
+            existing = existing[drop_n:]
+            prior_unread = int(self.user_inbox_unread.get(key, u256(0)))
+            adj = prior_unread - dropped_unread
+            if adj < 0:
+                adj = 0
+            self.user_inbox_unread[key] = u256(adj)
+        self.user_inbox_json[key] = json.dumps(existing)
+        self.user_inbox_next_seq[key] = u256(seq_now + 1)
+        self.user_inbox_unread[key] = u256(
+            int(self.user_inbox_unread.get(key, u256(0))) + 1
+        )
+        self._emit(EVENT_NOTIFICATION_QUEUED, nda_id, recipient, {
+            "kind": kind,
+            "seq": seq_now,
+        })
 
     def _maybe_check_reputation_elite(self, addr: Address) -> None:
         score = self._rep_get(addr)
@@ -545,6 +666,12 @@ class NDASentinel(gl.Contract):
             "expiry": str(expiry_timestamp),
         })
         self._award_badge(sender, BADGE_FIRST_NDA, 1)
+        # Milestone 3 — inbox for counterparty (they have to activate).
+        self._notify(
+            counterparty, NOTIFY_KIND_NDA_CREATED, new_id,
+            "NDA proposal received",
+            f"You are party B on NDA #{int(new_id)} ({scope}). Activate within 7 days.",
+        )
 
         return new_id
 
@@ -571,6 +698,12 @@ class NDASentinel(gl.Contract):
         self.ndas[idx] = nda
         self._emit(EVENT_NDA_ACTIVATED, nda_id, nda.party_b, {"stake_b": str(val)})
         self._award_badge(nda.party_b, BADGE_FIRST_ACTIVATION, 1)
+        # Milestone 3 — tell party_a their NDA went live.
+        self._notify(
+            nda.party_a, NOTIFY_KIND_NDA_ACTIVATED, nda_id,
+            "NDA now active",
+            f"NDA #{int(nda_id)} was activated by party B with stake {val} wei.",
+        )
 
     @gl.public.write
     def cancel_pending_nda(self, nda_id: u256) -> None:
@@ -596,6 +729,11 @@ class NDASentinel(gl.Contract):
         nda.stake_a = u256(0)
         self.ndas[idx] = nda
         self._emit(EVENT_NDA_CANCELLED, nda_id, nda.party_a, {"refund": str(refund)})
+        self._notify(
+            nda.party_b, NOTIFY_KIND_NDA_CANCELLED, nda_id,
+            "NDA cancelled",
+            f"NDA #{int(nda_id)} was cancelled after activation deadline elapsed.",
+        )
 
     @gl.public.write.payable
     def report_leak(self, nda_id: u256, suspect_url: str, revealed_keywords_json: str, salt: str) -> None:
@@ -892,6 +1030,12 @@ Count how many of the three sources you were able to fetch AND whose content cor
         })
         # Milestone 2: award "first_report" on any consensus-reached report.
         self._award_badge(sender, BADGE_FIRST_REPORT, 1)
+        # Milestone 3 — inbox receipt of the reporter's own submission.
+        self._notify(
+            sender, NOTIFY_KIND_LEAK_REPORTED, nda_id,
+            f"Leak report submitted — verdict: {verdict}",
+            f"NDA #{int(nda_id)}: consensus reached with verdict {verdict}.",
+        )
 
         if verdict == "violation_confirmed":
             resp_party_str = result_payload.get("responsible_party", "unknown")
@@ -956,6 +1100,19 @@ Count how many of the three sources you were able to fetch AND whose content cor
                         "treasury_fee_escrow": str(treasury_fee),
                         "appeal_deadline": str(nda.appeal_deadline),
                     })
+                    # Milestone 3 — inbox both the violator (appeal window)
+                    # and the non-violator (they earn compensation on
+                    # finalize).
+                    self._notify(
+                        violator, NOTIFY_KIND_VIOLATION_CONFIRMED, nda_id,
+                        "Violation confirmed against you",
+                        f"NDA #{int(nda_id)}: {int(slash_pool)} wei slashed. Appeal window open until {int(nda.appeal_deadline)}.",
+                    )
+                    self._notify(
+                        other_party, NOTIFY_KIND_VIOLATION_CONFIRMED, nda_id,
+                        "Counterparty violation confirmed",
+                        f"NDA #{int(nda_id)}: {int(compensation)} wei compensation escrowed for you. Finalize after appeal window.",
+                    )
                     # Milestone 2 badge awards:
                     confirmed_n = int(self.reporter_confirmed_count.get(sender_key, u256(0)))
                     hunter_tier = self._tier_for_confirmed_reports(confirmed_n)
@@ -1043,6 +1200,19 @@ Count how many of the three sources you were able to fetch AND whose content cor
             "compensation": str(compensation),
             "treasury_fee": str(treasury_fee),
         })
+        # Milestone 3 — payout notifications for reporter + non-violator.
+        if reward > 0:
+            self._notify(
+                reporter_addr, NOTIFY_KIND_VERDICT_FINALIZED, nda_id,
+                "Reporter reward available",
+                f"NDA #{int(nda_id)}: {reward} wei reporter reward moved to your withdrawable balance.",
+            )
+        if compensation > 0:
+            self._notify(
+                other_party, NOTIFY_KIND_VERDICT_FINALIZED, nda_id,
+                "Compensation available",
+                f"NDA #{int(nda_id)}: {compensation} wei compensation moved to your withdrawable balance.",
+            )
         # Milestone 2 — Settler badge (tiered) tracked on the caller.
         sender_key_s = self._addr_key(sender)
         prior_settle = int(self.user_settle_count.get(sender_key_s, u256(0)))
@@ -1170,6 +1340,12 @@ Count how many of the three sources you were able to fetch AND whose content cor
             "evidence_timestamp": str(evidence_timestamp),
             "context_notes_len": len(context_notes),
         })
+        # Milestone 3 — notify the original reporter that an appeal was filed.
+        self._notify(
+            nda.reporter, NOTIFY_KIND_APPEAL_FILED, nda_id,
+            "Appeal filed against your report",
+            f"NDA #{int(nda_id)}: violator appealed on ground {appeal_ground}. Consensus rerun in progress.",
+        )
 
         # Capture original verdict + structured-claim fields as locals so
         # the leader closure never re-reads storage inside the nondet
@@ -1388,6 +1564,17 @@ Return STRICT JSON:
                 "restored_collateral": str(restored_collateral),
                 "appeal_fee_refunded": str(val),
             })
+            # Milestone 3 — inbox appellant (won) + original reporter (lost).
+            self._notify(
+                sender, NOTIFY_KIND_APPEAL_OVERTURNED, nda_id,
+                "Appeal WON",
+                f"NDA #{int(nda_id)}: verdict overturned. Collateral restored + appeal fee refunded.",
+            )
+            self._notify(
+                original_reporter, NOTIFY_KIND_APPEAL_OVERTURNED, nda_id,
+                "Your report was overturned",
+                f"NDA #{int(nda_id)}: appellate jury sided with the appellant. Reputation adjusted.",
+            )
             # Milestone 2: appeal-champion tier based on overturn wins.
             wins_now = int(self.overturn_wins_count.get(appellant_key, u256(0)))
             champ_tier = self._tier_for_overturn_wins(wins_now)
@@ -1405,6 +1592,16 @@ Return STRICT JSON:
                 "appeal_fee_burned_to_treasury": str(val),
                 "verdict": verdict,
             })
+            self._notify(
+                sender, NOTIFY_KIND_APPEAL_UPHELD, nda_id,
+                "Appeal upheld against you",
+                f"NDA #{int(nda_id)}: appellate jury agreed with original verdict. Appeal fee burned.",
+            )
+            self._notify(
+                nda.reporter, NOTIFY_KIND_APPEAL_UPHELD, nda_id,
+                "Appeal upheld — reward unblocked",
+                f"NDA #{int(nda_id)}: appellate ruling supports your report. You can now finalize the reward.",
+            )
             
         self.appeals[int(app_id)] = app
         self.ndas[idx] = nda
@@ -1573,6 +1770,18 @@ Return JSON:
             "refund_a": str(refund_a),
             "refund_b": str(refund_b),
         })
+        if refund_a > 0:
+            self._notify(
+                nda.party_a, NOTIFY_KIND_NDA_EXPIRED, nda_id,
+                "NDA expired — stake refundable",
+                f"NDA #{int(nda_id)} expired cleanly. {refund_a} wei refunded to your withdrawable balance.",
+            )
+        if refund_b > 0:
+            self._notify(
+                nda.party_b, NOTIFY_KIND_NDA_EXPIRED, nda_id,
+                "NDA expired — stake refundable",
+                f"NDA #{int(nda_id)} expired cleanly. {refund_b} wei refunded to your withdrawable balance.",
+            )
 
     @gl.public.write
     def withdraw(self) -> None:
@@ -1988,6 +2197,12 @@ Return JSON:
         # Milestone 2 badges — first encrypted NDA (adopter) + baseline creator.
         self._award_badge(sender, BADGE_FIRST_NDA, 1)
         self._award_badge(sender, BADGE_ENCRYPTED_ADOPTER, 1)
+        # Milestone 3 — inbox for counterparty on encrypted NDAs too.
+        self._notify(
+            counterparty, NOTIFY_KIND_NDA_CREATED, new_id,
+            "Encrypted NDA proposal received",
+            f"You are party B on encrypted NDA #{int(new_id)} ({public_hint}). Activate to unlock the vault.",
+        )
         return new_id
 
     @gl.public.view
@@ -2137,6 +2352,141 @@ Return JSON:
             "snapshot_at": str(self.leaderboard_snapshot_at),
             "rows": json.loads(self.leaderboard_snapshot_json or "[]"),
         })
+
+    # ------------------------------------------------------------------
+    # v0.2.24 — Notification inbox
+    # ------------------------------------------------------------------
+
+    @gl.public.view
+    def get_inbox(self, user: Address) -> str:
+        key = self._addr_key(user)
+        return self.user_inbox_json.get(key, "[]")
+
+    @gl.public.view
+    def get_inbox_page(self, user: Address, from_index: u256, limit: u256) -> str:
+        """Paginated slice of the inbox in reverse-chronological order
+        (newest first). Callers pass the running offset from the last
+        call to keep polling cheap."""
+        key = self._addr_key(user)
+        try:
+            all_items = json.loads(self.user_inbox_json.get(key, "[]"))
+            if not isinstance(all_items, list):
+                all_items = []
+        except Exception:
+            all_items = []
+        rev = list(reversed(all_items))
+        total = len(rev)
+        start = int(from_index)
+        if start < 0:
+            start = 0
+        cap = int(limit)
+        if cap <= 0 or cap > 100:
+            cap = 25
+        end = min(total, start + cap)
+        return json.dumps({
+            "total": total,
+            "from": start,
+            "to": end,
+            "items": rev[start:end],
+        })
+
+    @gl.public.view
+    def get_inbox_unread_count(self, user: Address) -> u256:
+        return self.user_inbox_unread.get(self._addr_key(user), u256(0))
+
+    @gl.public.view
+    def get_notify_prefs(self, user: Address) -> str:
+        """Returns the raw prefs JSON. Missing keys default to enabled."""
+        key = self._addr_key(user)
+        return self.user_notify_prefs_json.get(key, "{}")
+
+    @gl.public.view
+    def get_notify_kinds(self) -> str:
+        return json.dumps(list(ALL_NOTIFY_KINDS))
+
+    @gl.public.write
+    def set_notify_prefs(self, prefs_json: str) -> None:
+        """Bulk-replace the caller's opt-out preferences. Accepts a JSON
+        object mapping notification-kind to bool. Unknown keys are
+        rejected so a malformed client cannot silently disable everything."""
+        sender = gl.message.sender_address
+        key = self._addr_key(sender)
+        try:
+            parsed = json.loads(prefs_json)
+        except Exception:
+            raise gl.vm.UserError("prefs_json must be valid JSON")
+        if not isinstance(parsed, dict):
+            raise gl.vm.UserError("prefs_json must be a JSON object")
+        cleaned: dict = {}
+        for k, v in parsed.items():
+            if k not in ALL_NOTIFY_KINDS:
+                raise gl.vm.UserError(f"unknown notification kind: {k}")
+            if not isinstance(v, bool):
+                raise gl.vm.UserError(f"pref value for {k} must be boolean")
+            cleaned[k] = v
+        self.user_notify_prefs_json[key] = json.dumps(cleaned)
+        self._emit(EVENT_NOTIFICATION_PREFS_UPDATED, u256(0), sender, {
+            "kinds_configured": len(cleaned),
+        })
+
+    @gl.public.write
+    def mark_inbox_read(self, up_to_seq: u256) -> None:
+        """Mark every unread inbox entry with `seq <= up_to_seq` as read."""
+        sender = gl.message.sender_address
+        key = self._addr_key(sender)
+        try:
+            items = json.loads(self.user_inbox_json.get(key, "[]"))
+            if not isinstance(items, list):
+                items = []
+        except Exception:
+            items = []
+        cap = int(up_to_seq)
+        newly_read = 0
+        for i, it in enumerate(items):
+            if isinstance(it, dict) and not it.get("read", False):
+                if int(it.get("seq", 0)) <= cap:
+                    it["read"] = True
+                    items[i] = it
+                    newly_read += 1
+        self.user_inbox_json[key] = json.dumps(items)
+        prior = int(self.user_inbox_unread.get(key, u256(0)))
+        adj = prior - newly_read
+        if adj < 0:
+            adj = 0
+        self.user_inbox_unread[key] = u256(adj)
+
+    @gl.public.write
+    def mark_all_inbox_read(self) -> None:
+        sender = gl.message.sender_address
+        key = self._addr_key(sender)
+        try:
+            items = json.loads(self.user_inbox_json.get(key, "[]"))
+            if not isinstance(items, list):
+                items = []
+        except Exception:
+            items = []
+        for i, it in enumerate(items):
+            if isinstance(it, dict) and not it.get("read", False):
+                it["read"] = True
+                items[i] = it
+        self.user_inbox_json[key] = json.dumps(items)
+        self.user_inbox_unread[key] = u256(0)
+
+    @gl.public.write
+    def clear_read_inbox(self) -> None:
+        """Prune every already-read entry from the caller's inbox to
+        keep the queue lean."""
+        sender = gl.message.sender_address
+        key = self._addr_key(sender)
+        try:
+            items = json.loads(self.user_inbox_json.get(key, "[]"))
+            if not isinstance(items, list):
+                items = []
+        except Exception:
+            items = []
+        keep = [x for x in items if isinstance(x, dict) and not x.get("read", False)]
+        self.user_inbox_json[key] = json.dumps(keep)
+        # unread counter unchanged — we kept every unread item.
 
     @gl.public.view
     def get_nda_count(self) -> u256:
