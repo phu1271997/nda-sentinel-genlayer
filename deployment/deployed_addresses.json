@@ -1,19 +1,30 @@
 {
   "studionet": {
-    "NDASentinel": "0x06be1A7897fD9f911eAF78383158A83d32485465",
-    "deployed_at": "2026-08-11",
-    "version": "v0.2.20",
+    "NDASentinel": "0x5502CF942A92a7FCB0F51169e529D47Ad53aBDD0",
+    "deployed_at": "2026-09-08",
+    "version": "v0.2.28",
     "source": "contracts/nda_sentinel.py",
     "class": "NDASentinel",
     "rpc": "https://studio.genlayer.com/api",
-    "notes": "v0.2.20 — addresses round-3 reviewer feedback: (1) E010 lint refactor — every gl.nondet.web.render call is lexically inside its eq_principle closure (no nested helper); (2) focused test proving real fetch executes inside equivalence-principle flow; (3) publisher identity authentication via register_publisher_identity(handle, proof_url) with on-chain LLM verification; (4) contract-verifiable appeal — new signature appeal(nda_id, appeal_ground, evidence_url, evidence_timestamp, context_notes) with enum + URL + PRIOR_DISCLOSURE timestamp gates enforced by the contract (not the LLM). ABI additions: register_publisher_identity, get_publisher_identity, get_appeal_grounds. See CHANGELOG.md § [0.2.20]."
+    "deployer": "0x8b563A8c9eeF530300e92E26457D1AB001daEcC7",
+    "tx_hash": "0xc92980143b491b5524d6a4ed83abf67edf5f7d85c89573a94b775fb7fe696b2b",
+    "notes": "v0.2.28 \u2014 4 milestones stacked: verified E2EE (M1 rebuild) + AI bounty board + endorsement web (M2 rebuild) + AI Watchers (M3 rebuild) + multi-party group NDA (M4). All 4 phases live from single deploy."
   },
   "studionet_previous": [
+    {
+      "NDASentinel": "0x06be1A7897fD9f911eAF78383158A83d32485465",
+      "deployed_at": "2026-08-11",
+      "version": "v0.2.20",
+      "source": "contracts/nda_sentinel.py",
+      "class": "NDASentinel",
+      "rpc": "https://studio.genlayer.com/api",
+      "notes": "v0.2.20 \u2014 addresses round-3 reviewer feedback: (1) E010 lint refactor \u2014 every gl.nondet.web.render call is lexically inside its eq_principle closure (no nested helper); (2) focused test proving real fetch executes inside equivalence-principle flow; (3) publisher identity authentication via register_publisher_identity(handle, proof_url) with on-chain LLM verification; (4) contract-verifiable appeal \u2014 new signature appeal(nda_id, appeal_ground, evidence_url, evidence_timestamp, context_notes) with enum + URL + PRIOR_DISCLOSURE timestamp gates enforced by the contract (not the LLM). ABI additions: register_publisher_identity, get_publisher_identity, get_appeal_grounds. See CHANGELOG.md \u00a7 [0.2.20]."
+    },
     {
       "NDASentinel": "0x817422E7aF4D86d848Bf9BC13b9A9c333CF341dd",
       "deployed_at": "2026-07-31",
       "version": "v0.2.19",
-      "notes": "Predecessor build. Superseded by v0.2.20 — old Appeal storage shape, free-text appeal signature, no publisher identity, nested _safe_fetch helper triggered genvm-lint E010. Kept for provenance."
+      "notes": "Predecessor build. Superseded by v0.2.20 \u2014 old Appeal storage shape, free-text appeal signature, no publisher identity, nested _safe_fetch helper triggered genvm-lint E010. Kept for provenance."
     },
     {
       "NDASentinel": "0xa39218800F583BB35B553a34ff479197Dc6Ca7DE",

@@ -17,13 +17,19 @@ distributes stakes based on the verdict, with a full appeal cycle.
 
 | Network    | Address | Explorer |
 |------------|---------|----------|
-| studionet  | `0x06be1A7897fD9f911eAF78383158A83d32485465` (v0.2.20) | [Open in Studio](https://studio.genlayer.com/?import-contract=0x06be1A7897fD9f911eAF78383158A83d32485465) |
-| studionet (previous) | `0x817422E7aF4D86d848Bf9BC13b9A9c333CF341dd` (v0.2.19) | [Open in Studio](https://studio.genlayer.com/?import-contract=0x817422E7aF4D86d848Bf9BC13b9A9c333CF341dd) |
+| studionet  | `0x5502CF942A92a7FCB0F51169e529D47Ad53aBDD0` (v0.2.28) | [Open in Studio](https://studio.genlayer.com/?import-contract=0x5502CF942A92a7FCB0F51169e529D47Ad53aBDD0) |
+| studionet (previous) | `0x06be1A7897fD9f911eAF78383158A83d32485465` (v0.2.20) | [Open in Studio](https://studio.genlayer.com/?import-contract=0x06be1A7897fD9f911eAF78383158A83d32485465) |
 
-Prior addresses (superseded): `0xa39218…a7DE` (v0.2.18, 2026-07-30),
-`0x10562A17…6F09` (v0.2.17, 2026-07-17), `0x42969f64…F2e0` (2026-06-18,
-wiped by studionet reset). See
-[`deployment/deployed_addresses.json`](deployment/deployed_addresses.json)
+v0.2.28 = 4 milestones stacked into a single deploy: verified E2EE
+with AI-attested keys + social recovery (M1 rebuild, v0.2.26),
+AI-adjudicated bounty board + endorsement web (M2 rebuild, v0.2.27),
+AI Watchers for consensus-verified external event subscriptions (M3
+rebuild, v0.2.28), and multi-party group NDAs (M4, v0.2.25).
+
+Prior addresses (superseded): `0x817422E7…41dd` (v0.2.19, 2026-07-31),
+`0xa39218…a7DE` (v0.2.18, 2026-07-30), `0x10562A17…6F09` (v0.2.17,
+2026-07-17), `0x42969f64…F2e0` (2026-06-18, wiped by studionet reset).
+See [`deployment/deployed_addresses.json`](deployment/deployed_addresses.json)
 for provenance.
 
 ## Why GenLayer
