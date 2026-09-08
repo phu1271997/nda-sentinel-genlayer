@@ -5,7 +5,7 @@ suspect URL directly on-chain and reaches consensus on whether protected
 information was disclosed; the smart contract atomically slashes and
 distributes stakes based on the verdict, with a full appeal cycle.
 
-- **Live App**: <https://nda-sentinel.vercel.app>
+- **Live App**: <https://nda-sentinel-ppp-df6a.vercel.app>
 - **Class Name**: `NDASentinel`
 - **Contract file**: [`contracts/nda_sentinel.py`](contracts/nda_sentinel.py)
 - **Contract pragma**: `v0.2.20`

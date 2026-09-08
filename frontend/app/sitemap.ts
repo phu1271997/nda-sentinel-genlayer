@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next"
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const base = "https://nda-sentinel.vercel.app"
+  const base = "https://nda-sentinel-ppp-df6a.vercel.app"
   return [
     { url: base, lastModified: new Date(), changeFrequency: "daily", priority: 1 },
     { url: `${base}/ndas`, lastModified: new Date(), changeFrequency: "hourly", priority: 0.9 },
