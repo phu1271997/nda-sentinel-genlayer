@@ -64,6 +64,26 @@ interface Hit {
   suppressed_by_cooldown: boolean
 }
 
+interface AcceptedVersion {
+  summary?: string
+  source_url?: string
+  pinned_at?: number
+  pinned_by?: string
+  summary_len?: number
+}
+
+interface Comparison {
+  at: number
+  by: string
+  novelty: number
+  overlap: number
+  materiality: number
+  changed: boolean
+  classification: string
+  evidence: string
+  reason: string
+}
+
 const STATUS_STYLES: Record<string, string> = {
   active: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
   paused: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
@@ -75,6 +95,8 @@ export default function WatcherDetailPage() {
   const { watcherId } = useParams()
   const [w, setW] = useState<Watcher | null>(null)
   const [hits, setHits] = useState<Hit[]>([])
+  const [accepted, setAccepted] = useState<AcceptedVersion | null>(null)
+  const [comparisons, setComparisons] = useState<Comparison[]>([])
   const [topUp, setTopUp] = useState("0.1")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -82,7 +104,7 @@ export default function WatcherDetailPage() {
 
   const load = useCallback(async () => {
     try {
-      const [wRaw, hRaw] = await Promise.all([
+      const [wRaw, hRaw, avRaw, cmpRaw] = await Promise.all([
         client.readContract({
           address: CONTRACT_ADDRESS,
           functionName: "get_watcher",
@@ -93,10 +115,24 @@ export default function WatcherDetailPage() {
           functionName: "get_watcher_hits",
           args: [BigInt(watcherId as string)],
         }) as Promise<unknown>,
+        client.readContract({
+          address: CONTRACT_ADDRESS,
+          functionName: "get_watcher_accepted_version",
+          args: [BigInt(watcherId as string)],
+        }) as Promise<unknown>,
+        client.readContract({
+          address: CONTRACT_ADDRESS,
+          functionName: "get_watcher_comparisons",
+          args: [BigInt(watcherId as string)],
+        }) as Promise<unknown>,
       ])
       setW(wRaw as Watcher)
       const parsed = JSON.parse(hRaw as string) as Hit[]
       setHits(Array.isArray(parsed) ? parsed : [])
+      const av = JSON.parse((avRaw as string) || "{}") as AcceptedVersion
+      setAccepted(av && av.summary ? av : null)
+      const cmp = JSON.parse((cmpRaw as string) || "[]") as Comparison[]
+      setComparisons(Array.isArray(cmp) ? cmp : [])
     } catch (err) {
       setError((err as Error).message)
     }
@@ -178,6 +214,26 @@ export default function WatcherDetailPage() {
       client.writeContract({
         address: CONTRACT_ADDRESS,
         functionName: "cancel_watcher",
+        args: [BigInt(watcherId as string)],
+        value: BigInt(0),
+      }),
+    )
+
+  const pinAcceptedVersion = () =>
+    runWrite(() =>
+      client.writeContract({
+        address: CONTRACT_ADDRESS,
+        functionName: "pin_accepted_version",
+        args: [BigInt(watcherId as string)],
+        value: BigInt(0),
+      }),
+    )
+
+  const compareToAccepted = () =>
+    runWrite(() =>
+      client.writeContract({
+        address: CONTRACT_ADDRESS,
+        functionName: "compare_to_accepted",
         args: [BigInt(watcherId as string)],
         value: BigInt(0),
       }),
@@ -365,6 +421,114 @@ export default function WatcherDetailPage() {
           </CardContent>
         </Card>
       ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4" /> Accepted-version comparison
+          </CardTitle>
+          <CardDescription>
+            Freeze an <b>immutable accepted version</b> of the watched page,
+            then let validators reach consensus on how the live page has drifted
+            from it — scoring <b>novelty</b>, <b>overlap</b> and{" "}
+            <b>materiality</b>. This is the boundary between the accepted
+            baseline and the current content, recorded on-chain.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          {accepted ? (
+            <div className="rounded-md border p-3 bg-slate-50 dark:bg-slate-900/40">
+              <div className="text-xs uppercase text-slate-500 mb-1">
+                Accepted version (immutable)
+              </div>
+              <p className="text-sm">{accepted.summary}</p>
+              {accepted.pinned_at ? (
+                <div className="text-[10px] text-slate-400 mt-2">
+                  pinned {formatDistanceToNow(new Date(Number(accepted.pinned_at) * 1000))} ago
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="rounded-md border border-dashed p-3 text-slate-500">
+              No accepted version pinned yet.
+              {isCreator
+                ? " Pin one to set the baseline every comparison measures against."
+                : " The creator must pin a baseline first."}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-3">
+            {isCreator && !accepted && w.status !== "cancelled" ? (
+              <Button onClick={pinAcceptedVersion} disabled={busy}>
+                {busy ? "Running consensus…" : "Pin accepted version"}
+              </Button>
+            ) : null}
+            {accepted && w.status !== "cancelled" ? (
+              <Button
+                onClick={compareToAccepted}
+                disabled={busy}
+                className="bg-purple-600 hover:bg-purple-700"
+              >
+                {busy ? "Running consensus…" : "Compare live page to accepted version"}
+              </Button>
+            ) : null}
+          </div>
+
+          {comparisons.length > 0 ? (
+            <div className="space-y-3">
+              {comparisons
+                .slice()
+                .reverse()
+                .map((c, i) => (
+                  <div key={i} className="rounded-md border p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <UiBadge
+                        className={
+                          c.changed
+                            ? c.materiality >= 60
+                              ? "bg-rose-500/15 text-rose-700 dark:text-rose-300"
+                              : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                            : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                        }
+                      >
+                        {c.classification}
+                      </UiBadge>
+                      <span className="text-xs text-slate-500 ml-auto">
+                        {format(new Date(c.at * 1000), "PPPp")}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3 text-center">
+                      {([
+                        ["novelty", c.novelty],
+                        ["overlap", c.overlap],
+                        ["materiality", c.materiality],
+                      ] as [string, number][]).map(([k, v]) => (
+                        <div key={k}>
+                          <div className="text-xs uppercase text-slate-500">{k}</div>
+                          <div className="font-semibold text-lg">{v}</div>
+                          <div className="h-1.5 rounded bg-slate-200 dark:bg-slate-800 mt-1">
+                            <div
+                              className="h-1.5 rounded bg-purple-500"
+                              style={{ width: `${Math.max(0, Math.min(100, v))}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {c.evidence ? (
+                      <blockquote className="text-xs italic border-l-2 border-purple-400 pl-2 my-2 text-slate-700 dark:text-slate-300">
+                        &ldquo;{c.evidence}&rdquo;
+                      </blockquote>
+                    ) : null}
+                    {c.reason ? (
+                      <div className="text-xs text-slate-500">{c.reason}</div>
+                    ) : null}
+                  </div>
+                ))}
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
