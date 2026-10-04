@@ -530,32 +530,34 @@ def test_reputation_tier_thresholds_via_thresholds_view(direct_vm, direct_deploy
 
 
 def test_event_log_appended_across_full_lifecycle(direct_vm, direct_deploy, direct_alice, direct_bob):
-    """Every state transition of a full lifecycle (create → activate →
-    report → appeal → finalize) must append exactly one event, in order."""
+    """A full lifecycle (create → activate → report → appeal → finalize) must
+    append the core lifecycle events IN ORDER. Later milestones also emit
+    bookkeeping events (notification_queued, badge_awarded, …) interleaved, so
+    we assert the lifecycle kinds form an ordered subsequence and the event log
+    only grows."""
     contract = deploy_active_nda(direct_vm, direct_deploy, direct_alice, direct_bob)
-    # Two events so far: nda_created, nda_activated
-    assert int(contract.get_events_count()) == 2
+    c_after_activate = int(contract.get_events_count())
+    assert c_after_activate >= 2
 
     mock_verdict(direct_vm, "upheld")
     report_party_a(direct_vm, contract, direct_bob)
-    # leak_reported + violation_confirmed
-    assert int(contract.get_events_count()) == 4
+    c_after_report = int(contract.get_events_count())
+    assert c_after_report > c_after_activate
 
     direct_vm.sender = direct_alice
     direct_vm.value = APPEAL_FEE
     do_appeal(contract, 0, context_notes="Test the appeal-filed and appeal-upheld emits.")
     direct_vm.value = 0
-    # appeal_filed + appeal_upheld
-    assert int(contract.get_events_count()) == 6
+    c_after_appeal = int(contract.get_events_count())
+    assert c_after_appeal > c_after_report
 
     direct_vm.sender = direct_bob
     contract.claim_reporter_reward(0)
-    # verdict_finalized
-    assert int(contract.get_events_count()) == 7
+    assert int(contract.get_events_count()) > c_after_appeal
 
-    events = json.loads(contract.get_events(0, 100))
+    events = json.loads(contract.get_events(0, 200))
     kinds = [e["kind"] for e in events]
-    assert kinds == [
+    LIFECYCLE = [
         "nda_created",
         "nda_activated",
         "leak_reported",
@@ -564,8 +566,10 @@ def test_event_log_appended_across_full_lifecycle(direct_vm, direct_deploy, dire
         "appeal_upheld",
         "verdict_finalized",
     ]
+    core = [k for k in kinds if k in LIFECYCLE]
+    assert core == LIFECYCLE
     # Meta parses cleanly and carries slash amount on violation_confirmed.
-    slash_event = events[3]
+    slash_event = next(e for e in events if e["kind"] == "violation_confirmed")
     slash_meta = json.loads(slash_event["meta_json"])
     assert int(slash_meta["slashed"]) == STAKE
 
@@ -943,10 +947,10 @@ def test_reputation_thresholds_expose_config_constants(
     direct_vm.sender = direct_alice
     contract = direct_deploy("contracts/nda_sentinel.py")
     thresholds = json.loads(contract.get_reputation_thresholds())
-    assert thresholds["baseline"] == 1000
-    assert thresholds["verified"] == 1200
-    assert thresholds["trusted"] == 1050
-    assert thresholds["flagged"] == 800
+    assert int(thresholds["baseline"]) == 1000
+    assert int(thresholds["verified_at"]) == 1200
+    assert int(thresholds["trusted_at"]) == 1050
+    assert int(thresholds["flagged_below"]) == 800
 
 
 def test_events_view_empty_on_fresh_deploy(direct_vm, direct_deploy, direct_alice):
@@ -972,9 +976,14 @@ def test_publisher_identity_view_empty_before_registration(
     contract = direct_deploy("contracts/nda_sentinel.py")
     from genlayer import Address
     result = contract.get_publisher_identity(Address(as_hex(direct_alice)))
-    # Empty means "no registered handle yet" — the wizard renders this as
-    # the "Register identity" CTA rather than a green checkmark.
-    assert result in ("", None)
+    # No registered handle yet — the view returns a structured record with an
+    # empty handle, which the wizard renders as the "Register identity" CTA
+    # rather than a green checkmark.
+    if result in ("", None):
+        pass
+    else:
+        parsed = json.loads(result)
+        assert parsed.get("handle", "") == ""
 
 
 # --- Security hardening v0.2.21 tests ----------------------------------------
@@ -1077,3 +1086,129 @@ def test_get_nda_count_tracks_creation(
         int(START.timestamp()) + 30 * 24 * 60 * 60, keyword_hashes(),
     )
     assert int(contract.get_nda_count()) == 1
+
+
+# ---------------------------------------------------------------------------
+# v0.2.29 — immutable accepted-version baseline + change classification.
+# These prove the AI Watcher does something materially distinct from the
+# keyword-match poll and the deterministic notification inbox: it freezes an
+# accepted version and scores how the live page has drifted from it.
+# ---------------------------------------------------------------------------
+
+WATCH_POOL = 2 * 10**17          # 0.2 GEN
+WATCH_RPH = 1 * 10**16           # 0.01 GEN
+WATCH_URL = "https://example.com/accepted-doc"
+WATCH_RULE = "any change to the confidential obligations or figures"
+
+
+def _deploy_with_watcher(direct_vm, direct_deploy, creator):
+    warp(direct_vm, 0)
+    direct_vm.sender = creator
+    contract = direct_deploy("contracts/nda_sentinel.py")
+    direct_vm.value = WATCH_POOL
+    wid = contract.create_watcher(
+        "Accepted doc watcher", WATCH_URL, WATCH_RULE,
+        as_hex(creator), 0, 300, WATCH_RPH,
+    )
+    direct_vm.value = 0
+    return contract, int(wid)
+
+
+def _mock_baseline(direct_vm, summary="Accepted v1: fee 100 GEN, 2 parties, 12-month term."):
+    direct_vm.clear_mocks()
+    direct_vm.mock_web(r".*", {"status": 200, "body": "Accepted document body v1"})
+    direct_vm.mock_llm(
+        r".*capturing an IMMUTABLE accepted-version baseline.*",
+        json.dumps({"ok": True, "summary": summary}),
+    )
+
+
+def _mock_comparison(direct_vm, **kw):
+    payload = {
+        "ok": True, "novelty": kw.get("novelty", 70),
+        "overlap": kw.get("overlap", 30),
+        "materiality": kw.get("materiality", 80),
+        "changed": kw.get("changed", True),
+        "classification": kw.get("classification", "material"),
+        "evidence": kw.get("evidence", "fee raised from 100 to 250 GEN"),
+        "reason": kw.get("reason", "The fee and term both changed."),
+    }
+    direct_vm.clear_mocks()
+    direct_vm.mock_web(r".*", {"status": 200, "body": "Current document body v2"})
+    direct_vm.mock_llm(
+        r".*comparing a web page's CURRENT content against an.*",
+        json.dumps(payload),
+    )
+
+
+def test_pin_accepted_version_is_immutable(direct_vm, direct_deploy, direct_alice):
+    contract, wid = _deploy_with_watcher(direct_vm, direct_deploy, direct_alice)
+    _mock_baseline(direct_vm)
+    direct_vm.sender = direct_alice
+    baseline = json.loads(contract.pin_accepted_version(wid))
+    assert baseline["summary"].startswith("Accepted v1")
+    stored = json.loads(contract.get_watcher_accepted_version(wid))
+    assert stored["summary"] == baseline["summary"]
+    # Second pin is rejected — the accepted version is frozen.
+    _mock_baseline(direct_vm, summary="A different summary that must NOT overwrite")
+    with pytest.raises(Exception, match="already pinned"):
+        contract.pin_accepted_version(wid)
+    # Baseline unchanged.
+    assert json.loads(contract.get_watcher_accepted_version(wid))["summary"] == baseline["summary"]
+
+
+def test_pin_accepted_version_creator_only(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract, wid = _deploy_with_watcher(direct_vm, direct_deploy, direct_alice)
+    _mock_baseline(direct_vm)
+    direct_vm.sender = direct_bob
+    with pytest.raises(Exception, match="Only creator"):
+        contract.pin_accepted_version(wid)
+
+
+def test_compare_requires_pinned_baseline(direct_vm, direct_deploy, direct_alice):
+    contract, wid = _deploy_with_watcher(direct_vm, direct_deploy, direct_alice)
+    _mock_comparison(direct_vm)
+    direct_vm.sender = direct_alice
+    with pytest.raises(Exception, match="No accepted version pinned"):
+        contract.compare_to_accepted(wid)
+
+
+def test_compare_classifies_material_change(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract, wid = _deploy_with_watcher(direct_vm, direct_deploy, direct_alice)
+    _mock_baseline(direct_vm)
+    direct_vm.sender = direct_alice
+    contract.pin_accepted_version(wid)
+
+    # Anyone can run the comparison; Bob does.
+    _mock_comparison(direct_vm, novelty=72, overlap=28, materiality=85,
+                     changed=True, classification="material")
+    direct_vm.sender = direct_bob
+    rec = json.loads(contract.compare_to_accepted(wid))
+    assert rec["changed"] is True
+    assert rec["classification"] == "material"
+    assert rec["novelty"] == 72
+    assert rec["materiality"] == 85
+
+    latest = json.loads(contract.get_watcher_latest_comparison(wid))
+    assert latest["materiality"] == 85
+    comps = json.loads(contract.get_watcher_comparisons(wid))
+    assert len(comps) == 1
+    # A material change fires a notification to the recipient (creator).
+    assert int(contract.get_inbox_unread_count(as_hex(direct_alice))) >= 1
+
+
+def test_compare_unchanged_low_materiality_no_alert(direct_vm, direct_deploy, direct_alice):
+    contract, wid = _deploy_with_watcher(direct_vm, direct_deploy, direct_alice)
+    _mock_baseline(direct_vm)
+    direct_vm.sender = direct_alice
+    contract.pin_accepted_version(wid)
+    unread_before = int(contract.get_inbox_unread_count(as_hex(direct_alice)))
+
+    _mock_comparison(direct_vm, novelty=5, overlap=95, materiality=10,
+                     changed=False, classification="unchanged",
+                     evidence="", reason="No substantive change.")
+    rec = json.loads(contract.compare_to_accepted(wid))
+    assert rec["changed"] is False
+    assert rec["classification"] == "unchanged"
+    # Below the materiality alert threshold → no new notification.
+    assert int(contract.get_inbox_unread_count(as_hex(direct_alice))) == unread_before
