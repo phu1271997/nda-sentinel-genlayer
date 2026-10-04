@@ -8,7 +8,7 @@ distributes stakes based on the verdict, with a full appeal cycle.
 - **Live App**: <https://nda-sentinel-ppp-df6a.vercel.app>
 - **Class Name**: `NDASentinel`
 - **Contract file**: [`contracts/nda_sentinel.py`](contracts/nda_sentinel.py)
-- **Contract pragma**: `v0.2.20`
+- **Contract pragma**: `v0.2.29`
 - **Changelog**: [CHANGELOG.md](CHANGELOG.md)
 - **Security model**: [SECURITY.md](SECURITY.md)
 - **Architecture deep-dive**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
@@ -17,8 +17,17 @@ distributes stakes based on the verdict, with a full appeal cycle.
 
 | Network    | Address | Explorer |
 |------------|---------|----------|
-| studionet  | `0x5502CF942A92a7FCB0F51169e529D47Ad53aBDD0` (v0.2.28) | [Open in Studio](https://studio.genlayer.com/?import-contract=0x5502CF942A92a7FCB0F51169e529D47Ad53aBDD0) |
-| studionet (previous) | `0x06be1A7897fD9f911eAF78383158A83d32485465` (v0.2.20) | [Open in Studio](https://studio.genlayer.com/?import-contract=0x06be1A7897fD9f911eAF78383158A83d32485465) |
+| studionet  | `0xA08c6aDD6e431334A8192fF375F3135d3d1cdB11` (v0.2.29) | [Open in Studio](https://studio.genlayer.com/?import-contract=0xA08c6aDD6e431334A8192fF375F3135d3d1cdB11) |
+| studionet (previous) | `0x5502CF942A92a7FCB0F51169e529D47Ad53aBDD0` (v0.2.28) | [Open in Studio](https://studio.genlayer.com/?import-contract=0x5502CF942A92a7FCB0F51169e529D47Ad53aBDD0) |
+
+v0.2.29 extends the AI Watchers milestone with an **immutable
+accepted-version baseline + AI change classification** — the capability
+that draws the novelty boundary for this submission (see
+[`docs/NOVELTY_BOUNDARY.md`](docs/NOVELTY_BOUNDARY.md)). A watcher can
+freeze an accepted version of its URL (`pin_accepted_version`) and then
+reach consensus on how the live page has drifted from it
+(`compare_to_accepted`), scoring novelty / overlap / materiality (0-100
+each) and recording each comparison immutably on-chain.
 
 v0.2.28 = 4 milestones stacked into a single deploy: verified E2EE
 with AI-attested keys + social recovery (M1 rebuild, v0.2.26),

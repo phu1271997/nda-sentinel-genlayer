@@ -1,16 +1,27 @@
 {
   "studionet": {
-    "NDASentinel": "0x5502CF942A92a7FCB0F51169e529D47Ad53aBDD0",
-    "deployed_at": "2026-09-08",
-    "version": "v0.2.28",
+    "NDASentinel": "0xA08c6aDD6e431334A8192fF375F3135d3d1cdB11",
+    "deployed_at": "2026-10-04",
+    "version": "v0.2.29",
     "source": "contracts/nda_sentinel.py",
     "class": "NDASentinel",
     "rpc": "https://studio.genlayer.com/api",
     "deployer": "0x8b563A8c9eeF530300e92E26457D1AB001daEcC7",
-    "tx_hash": "0xc92980143b491b5524d6a4ed83abf67edf5f7d85c89573a94b775fb7fe696b2b",
-    "notes": "v0.2.28 \u2014 4 milestones stacked: verified E2EE (M1 rebuild) + AI bounty board + endorsement web (M2 rebuild) + AI Watchers (M3 rebuild) + multi-party group NDA (M4). All 4 phases live from single deploy."
+    "tx_hash": "0xc095e9cdb028bce146fed0a63554616d1aae796049f2ad8f2b955abb7ad16fa0",
+    "notes": "v0.2.29 accepted-version baseline + change classification (novelty/overlap/materiality)"
   },
   "studionet_previous": [
+    {
+      "NDASentinel": "0x5502CF942A92a7FCB0F51169e529D47Ad53aBDD0",
+      "deployed_at": "2026-09-08",
+      "version": "v0.2.28",
+      "source": "contracts/nda_sentinel.py",
+      "class": "NDASentinel",
+      "rpc": "https://studio.genlayer.com/api",
+      "deployer": "0x8b563A8c9eeF530300e92E26457D1AB001daEcC7",
+      "tx_hash": "0xc92980143b491b5524d6a4ed83abf67edf5f7d85c89573a94b775fb7fe696b2b",
+      "notes": "v0.2.28 \u2014 4 milestones stacked: verified E2EE (M1 rebuild) + AI bounty board + endorsement web (M2 rebuild) + AI Watchers (M3 rebuild) + multi-party group NDA (M4). All 4 phases live from single deploy."
+    },
     {
       "NDASentinel": "0x06be1A7897fD9f911eAF78383158A83d32485465",
       "deployed_at": "2026-08-11",
