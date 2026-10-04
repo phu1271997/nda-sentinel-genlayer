@@ -83,7 +83,7 @@ studionet (public testnet faucet is a different chain and will not work).
 Reading-only pages work without a wallet.
 
 **Step 1 — Open the app and connect MetaMask.**
-Visit https://nda-sentinel.vercel.app and click **Connect MetaMask** in
+Visit https://nda-sentinel-gamma.vercel.app and click **Connect MetaMask** in
 the header. The app calls `wallet_switchEthereumChain` and adds studionet
 automatically if it is not registered.
 
@@ -133,7 +133,7 @@ https://explorer-studio.genlayer.com/address/0x06be1A7897fD9f911eAF78383158A83d3
   `get_events_for_nda`, `get_stats`.
 
 ## Website
-https://nda-sentinel.vercel.app
+https://nda-sentinel-gamma.vercel.app
 
 ## GitHub
 https://github.com/phu1271997/nda-sentinel-genlayer

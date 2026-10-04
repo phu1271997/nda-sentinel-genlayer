@@ -21,12 +21,12 @@ export const metadata: Metadata = {
   title: "NDA Sentinel — Trustless NDA enforcement on GenLayer",
   description:
     "AI Jury reads the suspect URL on-chain and reaches consensus on the verdict; the contract slashes and distributes stakes atomically. No $200k lawsuits, no 24-month waits.",
-  metadataBase: new URL("https://nda-sentinel-ppp-df6a.vercel.app"),
+  metadataBase: new URL("https://nda-sentinel-gamma.vercel.app"),
   openGraph: {
     title: "NDA Sentinel — Trustless NDA enforcement on GenLayer",
     description:
       "AI Jury adjudicates NDA leaks on-chain via GenLayer consensus. Multi-source fetch + reputation + structured appeals.",
-    url: "https://nda-sentinel-ppp-df6a.vercel.app",
+    url: "https://nda-sentinel-gamma.vercel.app",
     siteName: "NDA Sentinel",
     type: "website",
   },

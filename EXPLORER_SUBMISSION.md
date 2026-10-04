@@ -2,7 +2,7 @@
 
 **Project:** NDA Sentinel · **Prepared:** 2026-08-25 · **Status: READY**
 
-Seed complete on studionet. NDA #3 = violation_confirmed + appeal_upheld (Record A + C); NDA #4 = no_violation (Record B). All three records readable in incognito **without a wallet** at https://nda-sentinel.vercel.app.
+Seed complete on studionet. NDA #3 = violation_confirmed + appeal_upheld (Record A + C); NDA #4 = no_violation (Record B). All three records readable in incognito **without a wallet** at https://nda-sentinel-gamma.vercel.app.
 
 ---
 
@@ -114,7 +114,7 @@ https://explorer-studio.genlayer.com/address/0x06be1A7897fD9f911eAF78383158A83d3
 - **Verified via probe:** seeded NDA #3/4/3 (appeal) transactions all returned `GENVM RESULT: SUCCESS` + `CONSENSUS RESULT: Accepted` on the explorer.
 
 ### Website
-https://nda-sentinel.vercel.app
+https://nda-sentinel-gamma.vercel.app
 
 ### GitHub
 https://github.com/phu1271997/nda-sentinel-genlayer
