@@ -27,6 +27,14 @@ distributes stakes based on the verdict, with a full appeal cycle.
 > [`docs/MILESTONE_COMPARISON_ai_watchers.md`](docs/MILESTONE_COMPARISON_ai_watchers.md)
 > (`git diff v0.2.27-reviewed-baseline..v0.2.28-ai-watchers --stat`).
 
+> **Keys + social-recovery milestone — immutable comparison.** From the final
+> reviewed version (tag `v0.2.25-reviewed-baseline`, commit `043609a`) to this
+> Milestone's submitted commit (tag `v0.2.26-keys-recovery`, commit `4659ee9`):
+> 8 files, +2064/−112 — verified E2EE + AI-attested keys + K-of-N guardian social
+> recovery. Full diff + not-already-covered proof:
+> [`docs/MILESTONE_COMPARISON_keys_recovery.md`](docs/MILESTONE_COMPARISON_keys_recovery.md)
+> (`git diff v0.2.25-reviewed-baseline..v0.2.26-keys-recovery --stat`).
+
 v0.2.29 extends the AI Watchers milestone with an **immutable
 accepted-version baseline + AI change classification** — the capability
 that draws the novelty boundary for this submission (see
