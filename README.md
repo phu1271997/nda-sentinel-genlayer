@@ -20,6 +20,13 @@ distributes stakes based on the verdict, with a full appeal cycle.
 | studionet  | `0xA08c6aDD6e431334A8192fF375F3135d3d1cdB11` (v0.2.29) | [Open in Studio](https://studio.genlayer.com/?import-contract=0xA08c6aDD6e431334A8192fF375F3135d3d1cdB11) |
 | studionet (previous) | `0x5502CF942A92a7FCB0F51169e529D47Ad53aBDD0` (v0.2.28) | [Open in Studio](https://studio.genlayer.com/?import-contract=0x5502CF942A92a7FCB0F51169e529D47Ad53aBDD0) |
 
+> **AI Watchers milestone — immutable comparison.** From the final reviewed
+> version (tag `v0.2.27-reviewed-baseline`, commit `8bf1d01`) to this Milestone's
+> submitted commit (tag `v0.2.28-ai-watchers`, commit `b181d80`): 6 files,
+> +1557/−2, all net-new AI Watchers work. Full diff + not-already-covered proof:
+> [`docs/MILESTONE_COMPARISON_ai_watchers.md`](docs/MILESTONE_COMPARISON_ai_watchers.md)
+> (`git diff v0.2.27-reviewed-baseline..v0.2.28-ai-watchers --stat`).
+
 v0.2.29 extends the AI Watchers milestone with an **immutable
 accepted-version baseline + AI change classification** — the capability
 that draws the novelty boundary for this submission (see
